@@ -6,14 +6,18 @@
     <ProjectType>CppApplication</ProjectType>
     <AppType>Application</AppType>
     <FrameworkType>None</FrameworkType>
+    <Base>True</Base>
     <MainSource>src\Main.cpp</MainSource>
     <Config Condition="'$(Config)'==''">Debug</Config>
     <Platform Condition="'$(Platform)'==''">Win32</Platform>
     <BDS Condition="'$(BDS)'==''">C:\Program Files (x86)\Embarcadero\Studio\15.0</BDS>
     <TargetedPlatforms>1</TargetedPlatforms>
     <OutputName>OdinBCC</OutputName>
-    <FinalOutputDir>bin\$(Config)\</FinalOutputDir>
-    <IntermediateOutputDir>build\$(Config)\</IntermediateOutputDir>
+    <!-- Base is the IDE inheritance node, and builds with Debug semantics. -->
+    <BccConfiguration Condition="'$(Config)'=='Base' or '$(Config)'=='Debug'">Debug</BccConfiguration>
+    <BccConfiguration Condition="'$(Config)'=='Release'">Release</BccConfiguration>
+    <FinalOutputDir>bin\$(BccConfiguration)\</FinalOutputDir>
+    <IntermediateOutputDir>build\$(BccConfiguration)\</IntermediateOutputDir>
     <DynamicRTL>false</DynamicRTL>
     <UsePackages>false</UsePackages>
     <Multithreaded>true</Multithreaded>
@@ -22,11 +26,33 @@
     <IncludePath>include;engine\include;engine\src;engine\vendor\lz4;$(BDS)\include\windows\sdk;$(IncludePath)</IncludePath>
     <Defines>WIN32;UNICODE;_UNICODE;_WIN32_WINNT=0x0601;EJ_ODIN4_CORE_STATIC</Defines>
   </PropertyGroup>
+  <!-- C++Builder requires the inheritance property groups as well as items. -->
+  <PropertyGroup Condition="'$(Config)'=='Base' or '$(Base)'!=''">
+    <Base>true</Base>
+  </PropertyGroup>
+  <PropertyGroup Condition="('$(Platform)'=='Win32' and '$(Base)'=='true') or '$(Base_Win32)'!=''">
+    <Base_Win32>true</Base_Win32><CfgParent>Base</CfgParent><Base>true</Base>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Config)'=='Debug' or '$(Cfg_1)'!=''">
+    <Cfg_1>true</Cfg_1><CfgParent>Base</CfgParent><Base>true</Base>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Config)'=='Release' or '$(Cfg_2)'!=''">
+    <Cfg_2>true</Cfg_2><CfgParent>Base</CfgParent><Base>true</Base>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Cfg_1)'!=''">
+    <BCC_DisableOptimizations>true</BCC_DisableOptimizations>
+    <BCC_SourceDebuggingOn>true</BCC_SourceDebuggingOn>
+    <Defines>_DEBUG;$(Defines)</Defines>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Cfg_2)'!=''">
+    <Defines>NDEBUG;$(Defines)</Defines>
+  </PropertyGroup>
   <ItemGroup>
     <CppCompile Include="src\Main.cpp"><BuildOrder>0</BuildOrder></CppCompile>
     <CppCompile Include="engine\src\*.cpp"/><CppCompile Include="engine\vendor\lz4\*.c"/>
     <None Include="build.py"/><None Include="build.ps1"/>
     <None Include="README.md"/>
+    <BuildConfiguration Include="Base"><Key>Base</Key></BuildConfiguration>
     <BuildConfiguration Include="Debug"><Key>Cfg_1</Key><CfgParent>Base</CfgParent></BuildConfiguration>
     <BuildConfiguration Include="Release"><Key>Cfg_2</Key><CfgParent>Base</CfgParent></BuildConfiguration>
   </ItemGroup>
@@ -37,13 +63,17 @@
   </ProjectExtensions>
   <Import Project="$(BDS)\Bin\CodeGear.Cpp.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Cpp.Targets')"/>
   <!-- IDE and CLI deliberately use the same verified response-file compiler and staging path. -->
-  <Target Name="Build">
+  <Target Name="ValidateNativeConfiguration">
     <Error Condition="'$(Platform)'!='Win32'" Text="OdinBCC supports classic BCC32 Win32 only."/>
-    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\build.ps1&quot; -Configuration &quot;$(Config)&quot; -Bds &quot;$(BDS)&quot;"/>
+    <Error Condition="'$(BccConfiguration)'==''" Text="Select Base, Debug or Release; Base builds as Debug."/>
+  </Target>
+  <Target Name="Build" DependsOnTargets="ValidateNativeConfiguration">
+    <Message Importance="high" Text="Native BCC configuration: $(BccConfiguration) (IDE selection: $(Config))"/>
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\build.ps1&quot; -Configuration &quot;$(BccConfiguration)&quot; -Bds &quot;$(BDS)&quot;"/>
   </Target>
   <Target Name="Make" DependsOnTargets="Build"/>
-  <Target Name="Clean">
-    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\build.ps1&quot; -Configuration &quot;$(Config)&quot; -Clean"/>
+  <Target Name="Clean" DependsOnTargets="ValidateNativeConfiguration">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\build.ps1&quot; -Configuration &quot;$(BccConfiguration)&quot; -Clean"/>
   </Target>
   <Target Name="Rebuild" DependsOnTargets="Clean;Build"/>
 </Project>

@@ -41,3 +41,11 @@ Optional reviewed package PIT and actual firmware:
     py tests/run_tests.py --configuration Release --reviewed-pit <package.pit> --firmware-dir <firmware-folder>
 
 The supplied engine/rebuild_engine.py delegates to the same classic BCC build. Local detailed results/captures are generated under tests/native-build and tests/ui-artifacts-*; they are excluded from Git. docs/native-build-verification.json and dist/build-manifest.json record the shipped binary identity and source hashes.
+
+## C++Builder Base configuration regression
+
+The IDE can invoke Config=Base. The initial project omitted the inheritance property groups, and its PowerShell wrapper rejected Base before compilation. The project now registers Base/Debug/Release with standard parent metadata, maps Base to Debug for output and build flags, and accepts Base in the wrapper for cached IDE commands.
+
+Actual MSBuild Build invocations pass for Base, Debug and Release. A fresh checkout in a directory containing spaces also passes Config=Base and the exact direct PowerShell -Configuration Base command. No engine source or protocol behavior changed. Repeat with:
+
+    py tests/ide_configuration_tests.py

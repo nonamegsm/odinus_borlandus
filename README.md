@@ -20,7 +20,7 @@ Or use Python:
 py -3 build.py --configuration Release --bds 'C:\Program Files (x86)\Embarcadero\Studio\15.0'
 ~~~
 
-Open **OdinBCC.cbproj** in C++Builder, choose Win32 and Debug or Release, then Build/Run. IDE and CLI builds share the same response-file compiler driver. Both engine modules and the four pinned LZ4/xxHash C sources compile with BCC; the latter use its C++ mode without changing their source.
+Open **OdinBCC.cbproj** in C++Builder, choose Win32 and Debug or Release, then Build/Run. IDE and CLI builds share the same response-file compiler driver. The IDE Base inheritance node is also accepted and builds with Debug settings and output paths. Both engine modules and the four pinned LZ4/xxHash C sources compile with BCC; the latter use its C++ mode without changing their source.
 
 ~~~powershell
 & "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\MSBuild.exe" .\OdinBCC.cbproj /t:Build /p:Config=Release /p:Platform=Win32
