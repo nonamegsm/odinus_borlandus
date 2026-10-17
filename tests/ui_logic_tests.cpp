@@ -12,6 +12,25 @@ int main(){
     EJODIN4_FlashResult r=finalized();OdinUi::ProgressState s=context();
     check(warning(r,s),"only finalized full transfer with serial reboot disconnect is successful warning");
     check(!(r.flags&EJODIN4_FLASH_REBOOT_SENT),"warning preserves reboot not confirmed");
+    EJODIN4_FlashResult mixed=r;mixed.logical_sector_bytes=0;mixed.flags|=EJODIN4_FLASH_PER_PARTITION_PIT_UNITS;
+    check(warning(mixed,s),"mixed known PIT units retain successful flash and unconfirmed-reboot warning");
+    OdinUi::ProgressState strictState=s;strictState.logicalSectorBytes=512;
+    check(!warning(mixed,strictState),"strict caller unit cannot accept mixed PIT units flag");
+    EJODIN4_FlashResult homogeneous=mixed;homogeneous.logical_sector_bytes=512;
+    check(!warning(homogeneous,s),"homogeneous reported unit cannot accompany mixed-unit flag");
+    EJODIN4_FlashResult unplanned=mixed;unplanned.flags&=~EJODIN4_FLASH_PLAN_READY;check(!warning(unplanned,s),"mixed PIT units require planned package proof");
+    EJODIN4_FlashResult unmapped=mixed;unmapped.flags&=~EJODIN4_FLASH_PIT_MATCHED;check(!warning(unmapped,s),"mixed PIT units require exact live-PIT route proof");
+    EJODIN4_FlashResult missing=mixed;missing.flags&=~EJODIN4_FLASH_PER_PARTITION_PIT_UNITS;check(!warning(missing,s),"zero homogeneous unit without mixed-unit proof cannot succeed");
+    EJODIN4_FlashResult strict=r;strict.phase=EJODIN4_PHASE_COMPLETE;strict.logical_sector_bytes=512;strict.flags|=EJODIN4_FLASH_REBOOT_SENT;
+    OdinUi::Completion strictDone=OdinUi::completion(strict,EJODIN4_OK,EJODIN4_FLASH_WRITE,true,false,strictState);
+    check(strictDone.valid&&strictDone.success,"strict caller unit remains homogeneous and successful");
+    EJODIN4_FlashResult plan;std::memset(&plan,0,sizeof(plan));plan.struct_size=sizeof(plan);plan.operation=EJODIN4_FLASH_PLAN_ONLY;plan.phase=EJODIN4_PHASE_COMPLETE;
+    plan.image_count=2;plan.total_bytes=100;plan.flags=EJODIN4_FLASH_PLAN_READY;OdinUi::ProgressState planState;planState.operation=EJODIN4_FLASH_PLAN_ONLY;
+    check(OdinUi::completion(plan,EJODIN4_OK,EJODIN4_FLASH_PLAN_ONLY,false,false,planState).success,"valid offline plan control completes");
+    plan.flags|=EJODIN4_FLASH_PER_PARTITION_PIT_UNITS;check(!OdinUi::completion(plan,EJODIN4_OK,EJODIN4_FLASH_PLAN_ONLY,false,false,planState).valid,"offline plan rejects write-only per-partition result flag");
+    plan.operation=EJODIN4_FLASH_READ_PIT;plan.flags=EJODIN4_FLASH_PER_PARTITION_PIT_UNITS;plan.image_count=0;plan.total_bytes=0;
+    plan.transport=EJODIN4_DOWNLOAD_SAMSUNG_SERIAL;plan.protocol_version=3;plan.pit_entry_count=1;
+    check(!OdinUi::completion(plan,EJODIN4_OK,EJODIN4_FLASH_READ_PIT,false,false,planState).valid,"read-PIT result cannot carry a write-only mixed-unit flag");
     for(unsigned protocol=1;protocol<=2;++protocol){EJODIN4_FlashResult old=r;old.protocol_version=protocol;check(warning(old,s),"supported legacy protocol reboot disconnect warning accepted");}
     EJODIN4_FlashResult partial=r;partial.acknowledged_bytes--;OdinUi::ProgressState partialState=s;partialState.acknowledged=partial.acknowledged_bytes;
     check(!warning(partial,partialState),"partial ACK rejected by full-transfer proof even with consistent progress");
@@ -41,7 +60,7 @@ int main(){
     bad=r;bad.last_proven_phase=EJODIN4_PHASE_FINALIZING;check(!warning(bad,s),"finalize failure is not reboot failure");
     bad=r;bad.last_response_id=0x66;check(!warning(bad,s),"requires proven accepted finalization response");
     bad=r;bad.last_ack=1;check(!warning(bad,s),"device NACK never warning success");
-    bad=r;bad.flags|=32;check(!warning(bad,s),"unknown result flags rejected");
+    bad=r;bad.flags|=64;check(!warning(bad,s),"unknown result flags rejected");
     bad=r;bad.logical_sector_bytes=123;check(!warning(bad,s),"unknown geometry rejected");
     r.phase=EJODIN4_PHASE_COMPLETE;r.flags|=EJODIN4_FLASH_REBOOT_SENT;
     OdinUi::Completion c=OdinUi::completion(r,EJODIN4_OK,EJODIN4_FLASH_WRITE,true,false,s);

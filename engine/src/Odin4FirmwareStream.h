@@ -66,8 +66,7 @@ public:
     EJODIN4_Status verify_unchanged(std::string& error) const;
     EJODIN4_Status validate_device_pit(const std::vector<EJODIN4_PitEntry>& pit,
         uint32_t verified_sector_bytes, std::string& error,
-        uint64_t verified_userdata_capacity_bytes = 0,
-        uint64_t layout_userdata_lower_bound_bytes = 0);
+        uint64_t verified_userdata_capacity_bytes = 0);
     EJODIN4_Status open_image(size_t index, std::unique_ptr<ImageReader>& reader,
         std::string& error);
     std::vector<HeldArchive*> archives;

@@ -18,8 +18,9 @@ inline bool hashValid(const char* hash) {
 struct ProgressState {
     bool invalid,rebootPending;unsigned terminalPhases;uint64_t acknowledged;
     uint32_t operation,packageCount,roleMask,verifyPhase,verifyIndex;bool reboot;uint64_t verifyCompleted,verifyTotal;std::string verifyName;
+    uint32_t logicalSectorBytes;
     bool loggedImages[3072];
-    ProgressState():invalid(false),rebootPending(false),terminalPhases(0),acknowledged(0),operation(EJODIN4_FLASH_WRITE),packageCount(0),roleMask(0),verifyPhase(0),verifyIndex(0),reboot(false),verifyCompleted(0),verifyTotal(0){std::memset(loggedImages,0,sizeof(loggedImages));}
+    ProgressState():invalid(false),rebootPending(false),terminalPhases(0),acknowledged(0),operation(EJODIN4_FLASH_WRITE),packageCount(0),roleMask(0),verifyPhase(0),verifyIndex(0),reboot(false),verifyCompleted(0),verifyTotal(0),logicalSectorBytes(0){std::memset(loggedImages,0,sizeof(loggedImages));}
     bool observe(const EJODIN4_FlashProgress* p) {
         if(invalid)return false;
         if(!p||p->struct_size!=sizeof(*p)||p->reserved||
@@ -58,11 +59,14 @@ inline Completion completion(const EJODIN4_FlashResult& r,EJODIN4_Status status,
     const bool any=(r.flags&EJODIN4_FLASH_ANY_WRITE)!=0,finalized=(r.flags&EJODIN4_FLASH_FINALIZED)!=0,sent=(r.flags&EJODIN4_FLASH_REBOOT_SENT)!=0;
     if(state.invalid||r.struct_size!=sizeof(r)||r.operation!=operation||r.phase<1||r.phase>17||r.last_proven_phase>17||
         (r.logical_sector_bytes&&r.logical_sector_bytes!=512&&r.logical_sector_bytes!=1024&&r.logical_sector_bytes!=2048&&r.logical_sector_bytes!=4096)||
-        (r.flags&~31u)||(r.transport&&!supported(r.transport))||r.image_count>3072||r.images_completed>r.image_count||r.pit_entry_count>512||
+        (r.flags&~63u)||(r.transport&&!supported(r.transport))||r.image_count>3072||r.images_completed>r.image_count||r.pit_entry_count>512||
         r.acknowledged_bytes>r.total_bytes||r.acknowledged_bytes<state.acknowledged||
         (!write&&(any||finalized||sent||r.acknowledged_bytes))||(sent&&(!finalized||!reboot))||
         (operation==EJODIN4_FLASH_PLAN_ONLY&&(r.transport||r.protocol_version||(r.flags&~EJODIN4_FLASH_PLAN_READY)||r.images_completed))||
-        (pit&&r.flags))return out;
+        (pit&&r.flags)||
+        ((r.flags&EJODIN4_FLASH_PER_PARTITION_PIT_UNITS)&&(!write||state.logicalSectorBytes||r.logical_sector_bytes||
+            !(r.flags&EJODIN4_FLASH_PIT_MATCHED)||!(r.flags&EJODIN4_FLASH_PLAN_READY)))||
+        (write&&state.logicalSectorBytes&&r.logical_sector_bytes&&state.logicalSectorBytes!=r.logical_sector_bytes))return out;
     out.valid=true;
     out.rebootWarning=write&&reboot&&!cancelled&&!(state.terminalPhases&2)&&state.rebootPending&&
         status==EJODIN4_USB_IO_ERROR&&r.phase==EJODIN4_PHASE_FAILED&&r.last_proven_phase==EJODIN4_PHASE_REBOOT&&
@@ -72,7 +76,9 @@ inline Completion completion(const EJODIN4_FlashResult& r,EJODIN4_Status status,
     if(status!=EJODIN4_OK&&!out.rebootWarning)return out;
     if((!out.rebootWarning&&r.phase!=EJODIN4_PHASE_COMPLETE)||((pit||write)&&(!r.transport||!r.protocol_version||r.protocol_version>5))||
         (write&&(!any||!finalized||!(r.flags&EJODIN4_FLASH_PIT_MATCHED)||!(r.flags&EJODIN4_FLASH_PLAN_READY)||!r.image_count||!r.total_bytes||
-            (!out.rebootWarning&&sent!=reboot)||r.images_completed!=r.image_count||r.acknowledged_bytes!=r.total_bytes))||
+            (!out.rebootWarning&&sent!=reboot)||r.images_completed!=r.image_count||r.acknowledged_bytes!=r.total_bytes||
+            (!r.logical_sector_bytes&&!(r.flags&EJODIN4_FLASH_PER_PARTITION_PIT_UNITS))||
+            (state.logicalSectorBytes&&r.logical_sector_bytes!=state.logicalSectorBytes)))||
         (!pit&&(!(r.flags&EJODIN4_FLASH_PLAN_READY)||!r.image_count||!r.total_bytes))||(pit&&!r.pit_entry_count))return out;
     out.success=true;return out;
 }

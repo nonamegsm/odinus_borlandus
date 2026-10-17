@@ -33,8 +33,7 @@ bool valid_request(const EJODIN4_FlashRequest* request, const EJODIN4_FlashResul
         (request->io_timeout_ms && (request->io_timeout_ms < 1000 || request->io_timeout_ms > 120000)) ||
         (request->logical_sector_bytes && request->logical_sector_bytes != 512 &&
          request->logical_sector_bytes != 1024 && request->logical_sector_bytes != 2048 && request->logical_sector_bytes != 4096) ||
-        request->userdata_capacity_bytes > UINT64_C(1099511627776) ||
-        (request->userdata_capacity_bytes && !request->logical_sector_bytes)) {
+        request->userdata_capacity_bytes > UINT64_C(1099511627776)) {
         error = "Unknown flash operation, flags, reserved fields, timeout or verified geometry"; return false;
     }
     if (request->operation != EJODIN4_FLASH_WRITE && request->flags) {
@@ -200,11 +199,13 @@ EJODIN4_Status perform(const EJODIN4_FlashRequest& request, EJODIN4_FlashResult&
         if (status == EJODIN4_OK) {
             output.logical_sector_bytes = geometry.sector_bytes;
             status = firmware->validate_device_pit(pit, geometry.sector_bytes, error,
-                request.userdata_capacity_bytes, geometry.userdata_lower_bound_bytes);
+                request.userdata_capacity_bytes);
         }
         if (status == EJODIN4_OK) {
             events.geometry_source = geometry.source;
             output.flags |= EJODIN4_FLASH_PIT_MATCHED;
+            if(request.operation == EJODIN4_FLASH_WRITE && geometry.per_partition_units)
+                output.flags |= EJODIN4_FLASH_PER_PARTITION_PIT_UNITS;
             output.logical_sector_bytes = geometry.sector_bytes;
             events.phase(EJODIN4_PHASE_PLAN_VALIDATED);
         }

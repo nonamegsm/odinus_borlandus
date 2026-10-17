@@ -189,41 +189,35 @@ EJODIN4_Status FirmwareSet::open_image(size_t index,std::unique_ptr<ImageReader>
     if(!verified->ready())return bad(error,"Cannot initialize image second-pass SHA256",EJODIN4_INTERNAL_ERROR);
     reader.reset(verified.release());return EJODIN4_OK;
 }
-EJODIN4_Status FirmwareSet::validate_device_pit(const std::vector<EJODIN4_PitEntry>& pit,uint32_t sector,std::string& error,uint64_t verified_userdata_capacity_bytes,uint64_t layout_userdata_lower_bound_bytes){
+EJODIN4_Status FirmwareSet::validate_device_pit(const std::vector<EJODIN4_PitEntry>& pit,uint32_t sector,std::string& error,uint64_t verified_userdata_capacity_bytes){
     if(pit.empty()||pit.size()>512)return bad(error,"Device PIT is empty or exceeds the supported entry count");
-    if(sector<512||sector>4096||(sector&(sector-1)))return bad(error,"Partition capacity requires independently verified sector geometry");
-    if(layout_userdata_lower_bound_bytes&&(layout_userdata_lower_bound_bytes%sector||layout_userdata_lower_bound_bytes>uint64_t(INT64_MAX)))return bad(error,"Factory USERDATA lower bound must be finite and sector aligned");
-    if(layout_userdata_lower_bound_bytes&&verified_userdata_capacity_bytes&&verified_userdata_capacity_bytes<layout_userdata_lower_bound_bytes)return bad(error,"Verified USERDATA capacity contradicts the factory layout lower bound");
+    if(sector&&(sector<512||sector>4096||(sector&(sector-1))))return bad(error,"Caller PIT allocation unit is unsupported");
+    if(verified_userdata_capacity_bytes>uint64_t(INT64_MAX))return bad(error,"Verified USERDATA capacity is outside supported bounds");
     std::map<uint32_t,const EJODIN4_PitEntry*> ids;
     for(size_t p=0;p<pit.size();++p){const EJODIN4_PitEntry& entry=pit[p];if(!entry.identifier||entry.identifier==UINT32_MAX||!ids.insert(std::make_pair(entry.identifier,&entry)).second)return bad(error,"Device PIT has invalid or duplicate destination identifiers");}
-    if(layout_userdata_lower_bound_bytes){
-        unsigned matches=0;
-        for(size_t p=0;p<pit.size();++p){const EJODIN4_PitEntry& entry=pit[p];if(fold(field(entry.partition_name,32))=="userdata"){
-            ++matches;
-            if(entry.block_count&&uint64_t(entry.block_count)*sector<layout_userdata_lower_bound_bytes)return bad(error,"Positive live USERDATA capacity contradicts the factory layout lower bound");
-        }
-        }
-        if(matches!=1)return bad(error,"Factory lower bound requires one exact USERDATA partition");
-    }
+    uint32_t userdata_capacity_id=0;
     for(size_t im=0;im<images.size();++im){PlanImage& image=images[im];
         if(data_policy==EJODIN4_UPDATE_SELECTED&&selected_protected(image))return bad(error,"Selected update cannot approve USERDATA, MISC or OMR destinations");
-        const std::map<uint32_t,const EJODIN4_PitEntry*>::const_iterator found=ids.find(image.route.identifier);if(found==ids.end()||!same_route(image.route,*found->second))return bad(error,"Package route differs from the current device PIT");
+        const std::map<uint32_t,const EJODIN4_PitEntry*>::const_iterator found=ids.find(image.route.identifier);
+        if(found==ids.end()||!same_route(image.route,*found->second))return bad(error,"Package route differs from the current device PIT");
         const EJODIN4_PitEntry& entry=*found->second;
-        // Only block-addressed MMC/UFS partitions with proven units are handled.
         if(entry.device_type!=2&&entry.device_type!=8)return bad(error,"Unknown partition addressing");
-        const bool is_userdata=fold(field(entry.partition_name,32))=="userdata";
-        uint64_t capacity=uint64_t(entry.block_count)*sector;
+        const uint32_t unit=sector?sector:entry.device_type==8?4096u:512u;
+        const std::string partition=fold(field(entry.partition_name,32));
+        const bool is_userdata=partition=="userdata"||partition=="user_data";
+        if(!image.expanded_bytes)return bad(error,"Image logical size is zero");
+        uint64_t capacity=uint64_t(entry.block_count)*unit;
         if(is_userdata&&verified_userdata_capacity_bytes){
-            if(verified_userdata_capacity_bytes%sector)return bad(error,"Verified USERDATA capacity must align to the verified sector size");
+            // The scalar measurement belongs to one selected destination, not
+            // every differently identified USERDATA spelling in a mixed plan.
+            if(userdata_capacity_id&&userdata_capacity_id!=entry.identifier)return bad(error,"Verified USERDATA capacity is ambiguous across distinct destination identifiers");
+            userdata_capacity_id=entry.identifier;
+            if(verified_userdata_capacity_bytes%unit)return bad(error,"Verified USERDATA capacity must align to the partition PIT allocation unit");
             if(capacity&&capacity!=verified_userdata_capacity_bytes)return bad(error,"Verified USERDATA capacity conflicts with the positive live PIT capacity");
             capacity=verified_userdata_capacity_bytes;
         }
-        // A profile-derived lower bound is distinct from a measured capacity.
-        // Root activates it only after matching the reviewed stock layout; it
-        // never changes the live PIT or any caller-reported measurement.
-        if(!capacity&&is_userdata&&layout_userdata_lower_bound_bytes)capacity=layout_userdata_lower_bound_bytes;
         if(!capacity)return bad(error,"Zero partition capacity requires verified USERDATA geometry");
-        if(!image.expanded_bytes||image.expanded_bytes>capacity)return bad(error,"Image logical size exceeds current device partition capacity");
+        if(image.expanded_bytes>capacity)return bad(error,"Image logical size exceeds current device partition capacity");
         image.route=entry;
     }
     return verify_unchanged(error);

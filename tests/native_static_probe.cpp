@@ -37,6 +37,8 @@ BCC_STATIC_ASSERT(sizeof(EJODIN4_UsbProbe) == 14);
 BCC_STATIC_ASSERT(sizeof(EJODIN4_DownloadProbe) == 12);
 BCC_STATIC_ASSERT(offsetof(EJODIN4_UsbProbe, handshake_complete) == 12);
 
+BCC_STATIC_ASSERT(EJODIN4_FLASH_REBOOT == 1);
+BCC_STATIC_ASSERT(EJODIN4_FLASH_PER_PARTITION_PIT_UNITS == 32);
 BCC_STATIC_ASSERT(UINT64_C(1099511627776)==(uint64_t(1)<<40));
 namespace {
 template<class T> T* vector_data(std::vector<T>& value){return value.empty()?NULL:&value[0];}
@@ -210,4 +212,4 @@ void test_trailers() {
 }
 }
 
-int main(){try{check(EJODIN4_GetAbiVersion()==UINT32_C(0x10009),"Native ABI version");test_requests();test_pit();test_responses();test_trailers();std::cout<<"PASS native classic BCC core: "<<checks<<" checks; no DLL loads or device I/O\n";return 0;}catch(const std::exception& error){std::cerr<<"FAIL after "<<checks<<": "<<error.what()<<"\n";return 1;}}
+int main(){try{check(EJODIN4_GetAbiVersion()==UINT32_C(0x1000a),"Native ABI version");test_requests();test_pit();test_responses();test_trailers();std::cout<<"PASS native classic BCC core: "<<checks<<" checks; no DLL loads or device I/O\n";return 0;}catch(const std::exception& error){std::cerr<<"FAIL after "<<checks<<": "<<error.what()<<"\n";return 1;}}

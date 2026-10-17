@@ -62,7 +62,7 @@ enum { EJODIN4_PACKAGE_BL = 1, EJODIN4_PACKAGE_AP = 2, EJODIN4_PACKAGE_CP = 3, E
  * USERDATA, MISC and OMR destinations are always excluded in selected mode. */
 enum { EJODIN4_PRESERVE_DATA = 1, EJODIN4_CLEAN_INSTALL = 2, EJODIN4_UPDATE_SELECTED = 3 };
 enum { EJODIN4_FLASH_REBOOT = 1 };
-enum { EJODIN4_FLASH_ANY_WRITE = 1, EJODIN4_FLASH_FINALIZED = 2, EJODIN4_FLASH_REBOOT_SENT = 4, EJODIN4_FLASH_PIT_MATCHED = 8, EJODIN4_FLASH_PLAN_READY = 16 };
+enum { EJODIN4_FLASH_ANY_WRITE = 1, EJODIN4_FLASH_FINALIZED = 2, EJODIN4_FLASH_REBOOT_SENT = 4, EJODIN4_FLASH_PIT_MATCHED = 8, EJODIN4_FLASH_PLAN_READY = 16, EJODIN4_FLASH_PER_PARTITION_PIT_UNITS = 32 };
 enum {
     EJODIN4_PHASE_PREFLIGHT = 1, EJODIN4_PHASE_PLAN_IMAGE = 2,
     EJODIN4_PHASE_CONNECTING = 3, EJODIN4_PHASE_HANDSHAKE = 4,
@@ -178,7 +178,7 @@ typedef struct EJODIN4_FlashRequest {
     uint32_t file_count;
     uint64_t decoded_limit;
     uint32_t io_timeout_ms;
-    uint32_t logical_sector_bytes;
+    uint32_t logical_sector_bytes; /* Zero selects per-partition Samsung PIT allocation units. */
     uint64_t userdata_capacity_bytes;
     uint32_t reserved[2];
 } EJODIN4_FlashRequest;
@@ -392,16 +392,16 @@ typedef void (EJODIN4_CALL *EJODIN4_FlashProgressCallback)(
  * PLAN_ONLY/WRITE require explicit policy and decoded_limit 1..1TiB; READ_PIT
  * permits no files/policy and never sends image data or reboot. io_timeout_ms
  * is 0 for negotiated defaults or 1000..120000. REBOOT is WRITE-only.
- * logical_sector_bytes is a caller-verified PIT unit (512/1024/2048/4096),
- * or zero to require a reviewed matching layout profile. No generic unit is
- * assumed. userdata_capacity_bytes is a caller-verified actual capacity
- * for a live USERDATA entry whose count is zero, or zero when unknown.
- * A strictly matched SM-S921B BYH2 factory-layout profile can establish a
- * 4096-byte unit and conservative private USERDATA lower bound. This is
- * profile inference, not measured partition capacity; see the port evidence.
- * Selected mode uses the same pinned package/live layout to establish units,
- * checks present anchors, and does not infer a USERDATA capacity lower bound.
- * Unresolved geometry cannot approve partition writes.
+ * logical_sector_bytes is an optional caller PIT allocation-unit override
+ * (512/1024/2048/4096). Otherwise every selected type-2 MMC entry uses512 bytes
+ * and type-8 UFS entry uses4096 bytes. All images must fit the resulting byte
+ * capacity using their expanded sparse extent. Unknown device types fail.
+ * userdata_capacity_bytes is independently verified capacity for zero-count
+ * USERDATA; it may use automatic units and must align to that route's unit.
+ * A zero-count USERDATA entry has no inferred capacity floor. Mixed selected
+ * eMMC/UFS units report logical_sector_bytes=0 and, for a verified WRITE plan,
+ * PER_PARTITION_PIT_UNITS. Homogeneous plans report their common512/4096 unit.
+ * Explicit caller units remain strict; model/build/PIT hashes are not gates.
  * Preserve policy omits USERDATA/MISC and requires a bounded selected HOME_CSC
  * or USERDATA-slot OEM allowlist; clean uses CSC. Repeated PIT destinations
  * remain ordered writes with independent payloads, hashes and byte counts;
@@ -410,7 +410,7 @@ typedef void (EJODIN4_CALL *EJODIN4_FlashProgressCallback)(
  * optional reference archive supplying only its validated PIT. It needs no OEM
  * download list and omits USERDATA/MISC/OMR by member and PIT destination aliases.
  * Entire selected firmware is validated before any transfer; package PIT never
- * uploads. WRITE compares current device PIT and fails unsupported geometry.
+ * uploads. WRITE compares current device PIT and rejects unsupported routes.
  * Invalid request leaves result unchanged. A valid operation publishes partial
  * result even on failure: ANY_WRITE means a partition may have changed.
  * A successful WRITE requires every image ACK, session finalization and native

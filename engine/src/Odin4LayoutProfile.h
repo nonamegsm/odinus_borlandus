@@ -4,16 +4,17 @@
 namespace ejodin4 {
 struct LayoutResolution {
     uint32_t sector_bytes;
-    uint64_t userdata_lower_bound_bytes;
+    bool per_partition_units;
     const char* source;
-    LayoutResolution():sector_bytes(0),userdata_lower_bound_bytes(0),source(0){}
+    LayoutResolution():sector_bytes(0),per_partition_units(false),source(0){}
 };
-// Raw header and all entry bytes are compared; opaque suffix is not authenticated.
-bool same_pit_layout(const std::vector<uint8_t>& package, const std::vector<uint8_t>& live);
-// A caller-provided unit is distinct from the single reviewed layout inference.
+// Compare logical header/entry bytes; transport padding is not layout identity.
+bool same_pit_layout(const std::vector<uint8_t>& package,const std::vector<uint8_t>& live);
+// A positive caller unit overrides all routes. Otherwise selected type-2 MMC
+// entries use512-byte units and type-8 UFS entries use4096-byte units.
 EJODIN4_Status resolve_layout_profile(const FirmwareSet& firmware,
-    const std::vector<uint8_t>& live_pit, const EJODIN4_FirmwareFile* files,
-    uint32_t count, uint32_t caller_sector_bytes, LayoutResolution& result,
+    const std::vector<uint8_t>& live_pit,const EJODIN4_FirmwareFile* files,
+    uint32_t count,uint32_t caller_sector_bytes,LayoutResolution& result,
     std::string& error);
 }
 #endif

@@ -1,18 +1,24 @@
 {
   "sync": {
     "date": "2026-10-17",
-    "easyjtag_revision": "7bc28306e3d13095a3d00895131deb7cb9c42012",
-    "bcc_base_revision": "70dcd64",
-    "native_checks_per_configuration": 1394252,
+    "easyjtag_revision": "c69a9b2826ba7e54483bd0feaeaeb9ec737d054f",
+    "bcc_base_revision": "00c8c106f22b27085615bb87ec7af345b0db27fc",
+    "native_checks_per_configuration": 1668755,
     "manifest_regressions": 7,
-    "physical_device_operations": 0
+    "physical_device_operations": 0,
+    "abi_version": 65546,
+    "pit_units": {
+      "2": 512,
+      "8": 4096
+    },
+    "mixed_units_result_flag": 32
   },
   "configurations": {
     "Debug": {
       "executable": {
         "file": "OdinBCC.exe",
-        "sha256": "048ee60318f02381b128bbed7a83d1f7c8941feecd618acbd77641fa21b99e20",
-        "bytes": 799232
+        "sha256": "cb411921b1b8d3d3e5f995b479a56692bf2759a362e9f30037839743628afa02",
+        "bytes": 796160
       },
       "objects": 15,
       "imports": [
@@ -33,7 +39,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "PASS native classic BCC core: 832 checks; no DLL loads or device I/O\n",
-          "seconds": 0.652
+          "seconds": 0.534
         },
         {
           "target": "native_archive_tests",
@@ -42,7 +48,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "PASS native classic BCC archive: 173 checks; no DLL or device I/O\n",
-          "seconds": 0.695
+          "seconds": 0.553
         },
         {
           "target": "native_streaming_tests",
@@ -50,8 +56,8 @@
           "static_engine_objects": 14,
           "private_dll": false,
           "exit_code": 0,
-          "output": "native streaming: 125 checks passed\n",
-          "seconds": 0.596
+          "output": "native streaming: 164 checks passed\n",
+          "seconds": 0.602
         },
         {
           "target": "native_session_tests",
@@ -59,8 +65,8 @@
           "static_engine_objects": 14,
           "private_dll": false,
           "exit_code": 0,
-          "output": "Native BCC session fake tests passed (1392767 checks)\n",
-          "seconds": 6.519
+          "output": "Native BCC session fake tests passed (1667221 checks)\n",
+          "seconds": 6.075
         },
         {
           "target": "native_transport_tests",
@@ -69,7 +75,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "Native BCC fake USB transport tests passed: 299 checks\n",
-          "seconds": 0.394
+          "seconds": 0.364
         },
         {
           "target": "ui_logic_tests",
@@ -77,8 +83,8 @@
           "static_engine_objects": 14,
           "private_dll": false,
           "exit_code": 0,
-          "output": "PASS BCC UI logic: 56 checks; no device I/O\n",
-          "seconds": 0.27
+          "output": "PASS BCC UI logic: 66 checks; no device I/O\n",
+          "seconds": 0.249
         }
       ],
       "uiCases": [
@@ -95,8 +101,8 @@
     "Release": {
       "executable": {
         "file": "OdinBCC.exe",
-        "sha256": "4ba5f6b79b8f3d19ac5ea5bc16d6819392af367b7eaa18e703284c833f933551",
-        "bytes": 1886208
+        "sha256": "b6ed23784c4b06778c035f5ecbd301a0cfc343c2ce4037b1f06ff6d8b4bdb43b",
+        "bytes": 1884672
       },
       "objects": 15,
       "imports": [
@@ -117,7 +123,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "PASS native classic BCC core: 832 checks; no DLL loads or device I/O\n",
-          "seconds": 0.613
+          "seconds": 0.464
         },
         {
           "target": "native_archive_tests",
@@ -126,7 +132,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "PASS native classic BCC archive: 173 checks; no DLL or device I/O\n",
-          "seconds": 0.726
+          "seconds": 0.554
         },
         {
           "target": "native_streaming_tests",
@@ -134,8 +140,8 @@
           "static_engine_objects": 14,
           "private_dll": false,
           "exit_code": 0,
-          "output": "native streaming: 125 checks passed\n",
-          "seconds": 0.58
+          "output": "native streaming: 164 checks passed\n",
+          "seconds": 0.526
         },
         {
           "target": "native_session_tests",
@@ -143,8 +149,8 @@
           "static_engine_objects": 14,
           "private_dll": false,
           "exit_code": 0,
-          "output": "Native BCC session fake tests passed (1392767 checks)\n",
-          "seconds": 6.5
+          "output": "Native BCC session fake tests passed (1667221 checks)\n",
+          "seconds": 6.164
         },
         {
           "target": "native_transport_tests",
@@ -153,7 +159,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "Native BCC fake USB transport tests passed: 299 checks\n",
-          "seconds": 0.41
+          "seconds": 0.348
         },
         {
           "target": "ui_logic_tests",
@@ -161,8 +167,8 @@
           "static_engine_objects": 14,
           "private_dll": false,
           "exit_code": 0,
-          "output": "PASS BCC UI logic: 56 checks; no device I/O\n",
-          "seconds": 0.254
+          "output": "PASS BCC UI logic: 66 checks; no device I/O\n",
+          "seconds": 0.223
         }
       ],
       "uiCases": [
@@ -196,8 +202,8 @@
   },
   "portable": {
     "path": "dist/OdinBCC.exe",
-    "sha256": "4ba5f6b79b8f3d19ac5ea5bc16d6819392af367b7eaa18e703284c833f933551",
-    "bytes": 1886208
+    "sha256": "b6ed23784c4b06778c035f5ecbd301a0cfc343c2ce4037b1f06ff6d8b4bdb43b",
+    "bytes": 1884672
   },
   "limits": [
     "No connected phone was enumerated, probed, read or flashed.",

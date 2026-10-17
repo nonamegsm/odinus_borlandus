@@ -264,6 +264,7 @@ def main():
             assert 'cancel' in text(ui.control(165)).lower()
             assert not U.IsWindowEnabled(ui.control(206))
             assert 'Refresh devices ---' not in ui.log()
+            assert 'unmeasured' not in ui.log(), 'Automatic Samsung PIT units must not produce an unknown-capacity warning'
             assert not ui.checked(3) and not ui.checked(4)
             assert not any(U.IsWindowEnabled(ui.control(n)) for n in (123,303,313,124,304,314))
             assert text(ui.control(124))==str(archive)

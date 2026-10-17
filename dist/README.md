@@ -4,6 +4,8 @@ Run OdinBCC.exe on Windows. The GUI, Odin raw protocol engine and pinned LZ4 sou
 
 This build synchronizes the 2026-10-17 stock-driver framing, raw protocol 1–3 guards, slot selection, supported-device filtering, concise coloured logging and finalized-flash/reboot-warning fixes from EasyJTAG. Versions 4/5 remain unsupported until their DEVINFO flow is implemented. No phone operation starts automatically.
 
+PIT capacity validation is firmware-independent: eMMC type 2 uses 512-byte units and UFS type 8 uses 4096-byte units per partition. Expanded images must fit the matched live layout; zero-count USERDATA requires independently supplied capacity. ABI 1.10 supports mixed units without a model/build/hash allowlist.
+
 Native Debug/Release tests and owned-window offline firmware-plan checks pass. This native Borland build has not been physically flashed; the user-reported successful EasyJTAG flash is separate evidence.
 
 Rebuild from the source project with build.ps1 or OdinBCC.cbproj. build-manifest.json records the shipped executable, compiler, source/header/object hashes, notices and Windows imports.

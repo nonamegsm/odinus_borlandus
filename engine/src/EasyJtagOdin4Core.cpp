@@ -18,7 +18,7 @@ uint32_t read32(const uint8_t* p){return uint32_t(p[0])|(uint32_t(p[1])<<8)|(uin
 void write32(uint8_t* p,uint32_t value){for(unsigned i=0;i<4;++i)p[i]=uint8_t(value>>(8*i));}
 bool nonempty_partition(const char* field){size_t length=0;while(length<32&&field[length])++length;while(length&&(field[length-1]==' '||field[length-1]=='\t'))--length;return length!=0;}
 }
-uint32_t EJODIN4_CALL EJODIN4_GetAbiVersion(void){return UINT32_C(0x00010009);}
+uint32_t EJODIN4_CALL EJODIN4_GetAbiVersion(void){return UINT32_C(0x0001000a);}
 EJODIN4_Status EJODIN4_CALL EJODIN4_ParsePit(const uint8_t* bytes,uint32_t byte_count,EJODIN4_PitEntry* entries,uint32_t capacity,uint32_t* count,char* diagnostic,uint32_t diagnostic_capacity){
     if(count)*count=0;
     try{

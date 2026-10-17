@@ -102,7 +102,7 @@ static void __cdecl progressCallback(const EJODIN4_FlashProgress* p,void* contex
 }
 struct File {uint32_t role;std::string path;File(uint32_t r,const std::string& p):role(r),path(p){}};
 struct Job {int action;uint32_t policy;bool reboot;std::string device;std::vector<File> files;};
-struct Finished {int action;bool success;std::string message,summary,warning;std::vector<EJODIN4_UsbDevice> devices;EJODIN4_FlashResult result;Finished():action(0),success(false){ZeroMemory(&result,sizeof(result));}};
+struct Finished {int action;bool success;std::string message,summary,warning,pitUnitsNotice;std::vector<EJODIN4_UsbDevice> devices;EJODIN4_FlashResult result;Finished():action(0),success(false){ZeroMemory(&result,sizeof(result));}};
 static bool byRole(const File& a,const File& b){return a.role<b.role;}
 static bool hexDigest(const std::string& value){return value.size()==32&&value.find_first_not_of("0123456789abcdefABCDEF")==std::string::npos;}
 static bool safeMember(const std::string& name){
@@ -185,7 +185,7 @@ static unsigned __stdcall runWorker(void* parameter){
             request.data_policy=job->action==ID_PIT?0:job->policy;request.flags=job->action==ID_FLASH&&job->reboot?EJODIN4_FLASH_REBOOT:0;
             if(job->action!=ID_PLAN){request.device_path=job->device.c_str();request.device_path_bytes=(uint32_t)job->device.size()+1;}
             request.files=native.empty()?0:&native[0];request.file_count=(uint32_t)native.size();request.decoded_limit=job->action==ID_PIT?0:((uint64_t)64*1024*1024*1024);request.io_timeout_ms=job->action==ID_FLASH?0:30000;
-            done->result.struct_size=sizeof(done->result);OdinUi::ProgressState progress;progress.operation=request.operation;progress.reboot=job->reboot;progress.packageCount=(uint32_t)job->files.size();for(size_t pi=0;pi<job->files.size();++pi)progress.roleMask|=1u<<job->files[pi].role;
+            done->result.struct_size=sizeof(done->result);OdinUi::ProgressState progress;progress.operation=request.operation;progress.logicalSectorBytes=request.logical_sector_bytes;progress.reboot=job->reboot;progress.packageCount=(uint32_t)job->files.size();for(size_t pi=0;pi<job->files.size();++pi)progress.roleMask|=1u<<job->files[pi].role;
             EJODIN4_Status status=flashFirmware(&request,&done->result,progressCallback,cancelled,&progress,error,sizeof(error));
             const OdinUi::Completion final=OdinUi::completion(done->result,status,request.operation,job->reboot,cancelled(0)!=0,progress);
             done->success=final.success;
@@ -194,10 +194,13 @@ static unsigned __stdcall runWorker(void* parameter){
             else done->message=error[0]?error:"Engine did not establish completion of the operation.";
             if(!done->success&&(done->result.flags&EJODIN4_FLASH_ANY_WRITE)&&!(done->result.flags&EJODIN4_FLASH_FINALIZED))
                 done->message+=" A partition may be partially written; cancellation cannot undo writes. Do not blindly retry.";
+            if(final.success&&(done->result.flags&EJODIN4_FLASH_PER_PARTITION_PIT_UNITS))done->pitUnitsNotice="PIT allocation units resolved per partition (eMMC 512 / UFS 4096).";
             if(final.rebootWarning)done->warning="Warning: reboot confirmation unavailable. Check that the phone starts normally.";
             if(done->success){char summary[160];if(job->action==ID_PIT)sprintf(summary,"Partition map: %lu entries.",(unsigned long)done->result.pit_entry_count);
                 else sprintf(summary,"%s %lu images, %.1f GiB.",job->action==ID_PLAN?"Plan:":"Transferred:",(unsigned long)done->result.image_count,(double)done->result.total_bytes/1073741824.0);done->summary=summary;}
             char diagnostic[500];sprintf(diagnostic,"Final state: protocol %lu | images %lu/%lu | last response 0x%lX / ACK 0x%lX | any write: %s | finalized: %s | reboot requested: %s",(unsigned long)done->result.protocol_version,(unsigned long)done->result.images_completed,(unsigned long)done->result.image_count,(unsigned long)done->result.last_response_id,(unsigned long)done->result.last_ack,(done->result.flags&1)?"yes":"no",(done->result.flags&2)?"yes":"no",(done->result.flags&4)?"yes":"no");
+            postDetail("Common PIT allocation unit bytes: "+decimal64(done->result.logical_sector_bytes));
+            postDetail(std::string("Per-partition PIT units result flag: ")+((done->result.flags&EJODIN4_FLASH_PER_PARTITION_PIT_UNITS)?"yes":"no"));
             if(done->success){postDetail(diagnostic);postDetail("Bytes acknowledged: "+decimal64(done->result.acknowledged_bytes)+"/"+decimal64(done->result.total_bytes));if(error[0])postDetail(std::string("Post-flash reboot diagnostic: ")+error);}
             else {postLog(diagnostic);postLog("Bytes acknowledged: "+decimal64(done->result.acknowledged_bytes)+"/"+decimal64(done->result.total_bytes));}
 
@@ -251,7 +254,7 @@ static void layout(){if(!titleText)return;RECT r;GetClientRect(mainWindow,&r);in
 static void browse(int slot){wchar_t file[32768]={0};std::wstring current=textOf(paths[slot]);if(current.size()<32768)wcscpy(file,current.c_str());OPENFILENAMEW of;ZeroMemory(&of,sizeof(of));of.lStructSize=sizeof(of);of.hwndOwner=mainWindow;of.lpstrFilter=L"Samsung firmware (*.tar;*.tar.md5)\0*.tar;*.tar.md5\0All files\0*.*\0";of.lpstrFile=file;of.nMaxFile=32768;of.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR;if(GetOpenFileNameW(&of))SetWindowTextW(paths[slot],file);}
 static void saveLog(){wchar_t path[32768]=L"odin-session.log";OPENFILENAMEW of;ZeroMemory(&of,sizeof(of));of.lStructSize=sizeof(of);of.hwndOwner=mainWindow;of.lpstrFilter=L"Log files\0*.log\0All files\0*.*\0";of.lpstrFile=path;of.nMaxFile=32768;of.Flags=OFN_OVERWRITEPROMPT|OFN_NOCHANGEDIR;if(GetSaveFileNameW(&of)){if(!CopyFileW(logFilename.c_str(),path,FALSE))MessageBoxW(mainWindow,L"Cannot save log file.",L"Save log",MB_OK|MB_ICONERROR);}}
 static void loadEngine(){
-    if(EJODIN4_GetAbiVersion()!=0x10009){appendLog(L"Native engine version mismatch.");setBusy(false);return;}
+    if(EJODIN4_GetAbiVersion()!=0x1000a){appendLog(L"Native engine version mismatch.");setBusy(false);return;}
     enumDevices=&EJODIN4_EnumerateDownloadDevices;probeDevice=&EJODIN4_ProbeDownloadConnection;
     inspectArchive=&EJODIN4_InspectFirmwareArchive;flashFirmware=&EJODIN4_FlashFirmware;
     engine=true;setBusy(false);appendLog(L"Odin BCC ready. Native Borland engine linked directly; no engine DLL and no USB device opened.");
@@ -272,7 +275,7 @@ static LRESULT CALLBACK windowProcedure(HWND window,UINT msg,WPARAM wp,LPARAM lp
     case WM_FINISHED:{Finished* done=(Finished*)lp;updateProgress();if(worker){WaitForSingleObject(worker,INFINITE);CloseHandle(worker);worker=0;}setBusy(false);
         if(done->action==ID_REFRESH&&done->success){devices.swap(done->devices);SendMessageW(deviceBox,CB_RESETCONTENT,0,0);for(size_t i=0;i<devices.size();++i){if(!OdinUi::supported(devices[i].flags)||!devices[i].device_path[0])continue;std::string d=bounded(devices[i].description,sizeof(devices[i].description));d+=" | "+bounded(devices[i].driver,sizeof(devices[i].driver));const LRESULT item=SendMessageW(deviceBox,CB_ADDSTRING,0,(LPARAM)widen(d).c_str());if(item>=0)SendMessageW(deviceBox,CB_SETITEMDATA,(WPARAM)item,(LPARAM)i);}SendMessageW(deviceBox,CB_SETCURSEL,(WPARAM)-1,0);}
         if(!done->summary.empty())appendLog(widen(done->summary));
-        appendLog((done->success?L"SUCCESS: ":L"FAILED: ")+widen(done->message));if(!done->warning.empty())appendLog(widen(done->warning));SetWindowTextW(statusText,widen(done->message).c_str());if(done->success&&(done->action==ID_PLAN||done->action==ID_FLASH)){SendMessageW(overallBar,PBM_SETPOS,1000,0);if(done->action==ID_FLASH)SendMessageW(imageBar,PBM_SETPOS,1000,0);}delete done;return 0;}
+        appendLog((done->success?L"SUCCESS: ":L"FAILED: ")+widen(done->message));if(!done->pitUnitsNotice.empty())appendLog(widen(done->pitUnitsNotice));if(!done->warning.empty())appendLog(widen(done->warning));SetWindowTextW(statusText,widen(done->message).c_str());if(done->success&&(done->action==ID_PLAN||done->action==ID_FLASH)){SendMessageW(overallBar,PBM_SETPOS,1000,0);if(done->action==ID_FLASH)SendMessageW(imageBar,PBM_SETPOS,1000,0);}delete done;return 0;}
     case WM_CLOSE:if(busy){closing=true;InterlockedExchange(&cancelFlag,1);SetWindowTextW(statusText,L"Closing after safe cancellation completes...");return 0;}DestroyWindow(window);return 0;
     case WM_DESTROY:KillTimer(window,1);PostQuitMessage(0);return 0;}
     return DefWindowProcW(window,msg,wp,lp);
