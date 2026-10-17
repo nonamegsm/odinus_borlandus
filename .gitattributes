@@ -1,0 +1,3 @@
+# Preserve exact compiler inputs, vendor pins and published manifest hashes.
+* -text whitespace=cr-at-eol
+dist/OdinBCC.exe binary

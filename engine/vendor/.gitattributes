@@ -1,0 +1,2 @@
+upstream/** -text whitespace=cr-at-eol
+upstream/README.md whitespace=cr-at-eol,-blank-at-eol

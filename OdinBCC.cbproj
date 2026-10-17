@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="4.0" DefaultTargets="Build">
+  <PropertyGroup>
+    <ProjectGuid>{F226B63F-6861-4670-AB2E-210D7B063DEC}</ProjectGuid>
+    <ProjectVersion>16.0</ProjectVersion>
+    <ProjectType>CppApplication</ProjectType>
+    <AppType>Application</AppType>
+    <FrameworkType>None</FrameworkType>
+    <MainSource>src\Main.cpp</MainSource>
+    <Config Condition="'$(Config)'==''">Debug</Config>
+    <Platform Condition="'$(Platform)'==''">Win32</Platform>
+    <BDS Condition="'$(BDS)'==''">C:\Program Files (x86)\Embarcadero\Studio\15.0</BDS>
+    <TargetedPlatforms>1</TargetedPlatforms>
+    <OutputName>OdinBCC</OutputName>
+    <FinalOutputDir>bin\$(Config)\</FinalOutputDir>
+    <IntermediateOutputDir>build\$(Config)\</IntermediateOutputDir>
+    <DynamicRTL>false</DynamicRTL>
+    <UsePackages>false</UsePackages>
+    <Multithreaded>true</Multithreaded>
+    <UsingDelphiRTL>false</UsingDelphiRTL>
+    <BCC_UseClassicCompiler>true</BCC_UseClassicCompiler>
+    <IncludePath>include;engine\include;engine\src;engine\vendor\lz4;$(BDS)\include\windows\sdk;$(IncludePath)</IncludePath>
+    <Defines>WIN32;UNICODE;_UNICODE;_WIN32_WINNT=0x0601;EJ_ODIN4_CORE_STATIC</Defines>
+  </PropertyGroup>
+  <ItemGroup>
+    <CppCompile Include="src\Main.cpp"><BuildOrder>0</BuildOrder></CppCompile>
+    <CppCompile Include="engine\src\*.cpp"/><CppCompile Include="engine\vendor\lz4\*.c"/>
+    <None Include="build.py"/><None Include="build.ps1"/>
+    <None Include="README.md"/>
+    <BuildConfiguration Include="Debug"><Key>Cfg_1</Key><CfgParent>Base</CfgParent></BuildConfiguration>
+    <BuildConfiguration Include="Release"><Key>Cfg_2</Key><CfgParent>Base</CfgParent></BuildConfiguration>
+  </ItemGroup>
+  <ProjectExtensions>
+    <Borland.Personality>CPlusPlusBuilder.Personality.12</Borland.Personality>
+    <Borland.ProjectType>CppApplication</Borland.ProjectType>
+    <BorlandProject><CPlusPlusBuilder.Personality><Source><Source Name="MainSource">src\Main.cpp</Source></Source></CPlusPlusBuilder.Personality></BorlandProject>
+  </ProjectExtensions>
+  <Import Project="$(BDS)\Bin\CodeGear.Cpp.Targets" Condition="Exists('$(BDS)\Bin\CodeGear.Cpp.Targets')"/>
+  <!-- IDE and CLI deliberately use the same verified response-file compiler and staging path. -->
+  <Target Name="Build">
+    <Error Condition="'$(Platform)'!='Win32'" Text="OdinBCC supports classic BCC32 Win32 only."/>
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\build.ps1&quot; -Configuration &quot;$(Config)&quot; -Bds &quot;$(BDS)&quot;"/>
+  </Target>
+  <Target Name="Make" DependsOnTargets="Build"/>
+  <Target Name="Clean">
+    <Exec Command="powershell.exe -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildProjectDirectory)\build.ps1&quot; -Configuration &quot;$(Config)&quot; -Clean"/>
+  </Target>
+  <Target Name="Rebuild" DependsOnTargets="Clean;Build"/>
+</Project>

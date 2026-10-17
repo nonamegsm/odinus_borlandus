@@ -1,0 +1,64 @@
+odin4
+Copyright 2026 Llucs
+
+This software includes third-party components:
+
+- libusb
+- Crypto++
+- LZ4
+
+Each component is distributed under its own license.
+See the LICENSE file and individual source directories for full license texts and attributions.
+
+This NOTICE file is provided to comply with the Apache License 2.0 requirements.
+
+============================================================
+Additional notices for statically linked LZ4 and xxHash
+============================================================
+
+LZ4 and xxHash third-party notices
+
+These unmodified sources were bundled by Llucs/odin4 at commit
+b8630fb39624c76cdce0e196c57f7285d63286d3 under lib/lz4/.
+LZ4 version: 1.10.0 (lz4.h).
+xxHash version: 0.6.5 (xxhash.h).
+LZ4 upstream: https://github.com/lz4/lz4
+xxHash upstream: https://github.com/Cyan4973/xxHash
+
+Copyright notices retained from the source-file headers:
+lz4.c: Copyright (c) Yann Collet. All rights reserved.
+lz4.h: Copyright (c) Yann Collet. All rights reserved.
+lz4frame.c: Copyright (c) Yann Collet. All rights reserved.
+lz4frame.h: Copyright (c) Yann Collet. All rights reserved.
+lz4hc.c: Copyright (c) Yann Collet. All rights reserved.
+lz4hc.h: Copyright (c) Yann Collet. All rights reserved.
+xxhash.c: Copyright (C) 2012-2016, Yann Collet
+xxhash.h: Copyright (C) 2012-2016, Yann Collet.
+
+The BSD 2-Clause license below applies to these LZ4 and xxHash sources.
+It is reproduced from their embedded headers.
+
+BSD 2-Clause License (http://www.opensource.org/licenses/bsd-license.php)
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+    * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.

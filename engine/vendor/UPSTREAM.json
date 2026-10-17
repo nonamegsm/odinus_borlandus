@@ -1,0 +1,60 @@
+{
+  "schema": 1,
+  "repository": "https://github.com/Llucs/odin4",
+  "commit": "b8630fb39624c76cdce0e196c57f7285d63286d3",
+  "scope": "Step 1 portable offline core and original offline tests; no USB/firmware-transfer implementation",
+  "files": {
+    "LICENSE": {
+      "bytes": 11536,
+      "sha256": "72f6e52136c64fa6d30349e7ebab589eadef673d1f1cfc76c5a5da0a4a0953d0"
+    },
+    "NOTICE": {
+      "bytes": 345,
+      "sha256": "c1012a114574719a21d8ef4f77af219a6116a14006bc719bc2dad7a113ae8971"
+    },
+    "README.md": {
+      "bytes": 11393,
+      "sha256": "0073a8e9789fc6c1ce342ec76f6a8c18c327c74c39514c51024346ae3ffa2227"
+    },
+    "include/odin4/fuzz_utils.h": {
+      "bytes": 378,
+      "sha256": "404054ba09563414bdccec50e688eea072a74b334e6f5e8402b32019bec26edd"
+    },
+    "src/core/odin_types.h": {
+      "bytes": 1967,
+      "sha256": "1b39de0ff1573edfd9b4523f293623865099ed4b3bd652874e22bb85953d473b"
+    },
+    "src/firmware/tar_md5_trailer.h": {
+      "bytes": 3978,
+      "sha256": "c38a6ea05c1151f69fd9b58d4628509fcfea22cfb71766304992e5dfea2fee5b"
+    },
+    "src/fuzz_utils.cpp": {
+      "bytes": 3822,
+      "sha256": "7a1e51921a89805e3ed9d731ec50afd7e7703c4e1ffe6cff1910e87a10a72322"
+    },
+    "src/protocol/thor_protocol.h": {
+      "bytes": 6263,
+      "sha256": "909eafd1351f03fa6431370f828ec9d578186517f6f4d73eee9e397b3618d7f0"
+    },
+    "tests/main.cpp": {
+      "bytes": 896,
+      "sha256": "f5c0d5c6ebda7705395206d0c42717e4cd26bf2e42382286aa4f4a3263a28165"
+    },
+    "tests/test_framework.h": {
+      "bytes": 8637,
+      "sha256": "a29ae4ea1cc2db216b76cb1d63d6c900456324dd6a327c1a26e6aaf2d582f3bb"
+    },
+    "tests/test_odin_types.cpp": {
+      "bytes": 5844,
+      "sha256": "0899484103257e1d2f8961336c007b3af0eb353b2d1fd74b9241e578de5ad632"
+    },
+    "tests/test_tar_md5_trailer.cpp": {
+      "bytes": 5956,
+      "sha256": "374afc3f35d82b326c650d0cbf203a826e680827fd7735b4f7bc164008395a14"
+    },
+    "tests/test_thor_protocol.cpp": {
+      "bytes": 6064,
+      "sha256": "6cc2fe55d1b4847d6061057bf862f879b20e2dd02388c5aa9a97090cffbda8a9"
+    }
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "configurations": {
+    "Debug": {
+      "executable": {
+        "file": "OdinBCC.exe",
+        "sha256": "13273e7dba8a3341d10e2577344c492d7b7ac5c2cb5efb09a6eb83b464f628e0",
+        "bytes": 758272
+      },
+      "objects": 15,
+      "imports": [
+        "ADVAPI32.DLL",
+        "COMCTL32.DLL",
+        "COMDLG32.DLL",
+        "GDI32.DLL",
+        "KERNEL32.DLL",
+        "OLE32.DLL",
+        "SETUPAPI.DLL",
+        "USER32.DLL"
+      ]
+    },
+    "Release": {
+      "executable": {
+        "file": "OdinBCC.exe",
+        "sha256": "13a1534aa10309808f769126ce255b0441b97ac28d97ff5711c750aafeb28441",
+        "bytes": 1707008
+      },
+      "objects": 15,
+      "imports": [
+        "ADVAPI32.DLL",
+        "COMCTL32.DLL",
+        "COMDLG32.DLL",
+        "GDI32.DLL",
+        "KERNEL32.DLL",
+        "OLE32.DLL",
+        "SETUPAPI.DLL",
+        "USER32.DLL"
+      ]
+    }
+  },
+  "physicalDeviceOperations": 0,
+  "realOfflinePlan": {
+    "images": 26,
+    "bytes": 11882352976,
+    "knownPayloadDigestsMatched": 3
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "repository": "https://github.com/Llucs/odin4",
+  "commit": "b8630fb39624c76cdce0e196c57f7285d63286d3",
+  "source_directory": "lib/lz4",
+  "scope": "Unmodified bundled LZ4 1.10.0 and xxHash 0.6.5; statically linked into the Odin4 core",
+  "licenses": [
+    "BSD-2-Clause"
+  ],
+  "files": {
+    "lz4.c": {
+      "bytes": 118083,
+      "sha256": "d8d5dc603d2157266c8a41285ccaf69ebe6432cbd92d40d3917d15a988e89888"
+    },
+    "lz4.h": {
+      "bytes": 46123,
+      "sha256": "774f26afe507c3ea4e781faca51dfcad719f60804526cef7fe223e3c3e534eef"
+    },
+    "lz4frame.c": {
+      "bytes": 92300,
+      "sha256": "577b6b445bafc410abe53d512db27af82da13612e5cb8340a85fdecf0442a45c"
+    },
+    "lz4frame.h": {
+      "bytes": 37524,
+      "sha256": "f4647faab0c2c014b91d15b1f94ef5100b886c899973597d588c33eb51bfc196"
+    },
+    "lz4hc.c": {
+      "bytes": 95129,
+      "sha256": "53f6c148f243c6b214d80f85f157e690b53329bc44126da6668b7da87d2496ce"
+    },
+    "lz4hc.h": {
+      "bytes": 20752,
+      "sha256": "59d7c7e9bce386c74b87346d7f9c35575213205df7adeb712bfc00a97ba0ee7a"
+    },
+    "xxhash.c": {
+      "bytes": 34122,
+      "sha256": "b667033dc735fb5ea5648e0a61a2e065e5ef5bbda53669730063bd856c643c48"
+    },
+    "xxhash.h": {
+      "bytes": 13466,
+      "sha256": "aefdd236f35130495c18764cabed3f7b216906855fc5e6a9025cd2040bc84444"
+    }
+  },
+  "redistribution_notice": {
+    "path": "lz4/LICENSE.txt",
+    "bytes": 2244,
+    "sha256": "121e9e04aad2761a9832d475abd9778e3d8ecbe59427ad05715b5008e5ae0a12"
+  },
+  "provenance": "Exact Git blob bytes from the recorded commit; checkout line-ending conversion is excluded."
+}
