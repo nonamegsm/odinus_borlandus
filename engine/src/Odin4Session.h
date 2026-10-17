@@ -2,6 +2,7 @@
 #define EASYJTAG_ODIN4_SESSION_H
 #include "Odin4DownloadChannel.h"
 #include "Odin4FirmwareStream.h"
+#include "Odin4DeviceInfo.h"
 
 namespace ejodin4 {
 struct SessionState {
@@ -23,21 +24,26 @@ class Session {
     uint32_t packet_bytes_, flash_timeout_;
     uint32_t timeout_override_;
     bool begun_, failed_, total_set_;
+    bool identity_validated_;
+    DeviceInfo device_info_;
     bool metadata_baseline_set_, metadata_baseline_tail_;
     uint64_t total_;
     std::vector<uint8_t> pit_bytes_;
     EJODIN4_Status fail(EJODIN4_Status, const char*, std::string&);
     void phase(uint32_t);
     EJODIN4_Status announce_total(uint64_t, std::string&);
+    EJODIN4_Status read_device_info(std::string&);
+    EJODIN4_Status send_encoded_image(const PlanImage&, EncodedImageReader&, std::string&);
     EJODIN4_Status response(uint32_t expected, bool capability, uint32_t timeout, std::string&, bool metadata = false);
     EJODIN4_Status command(uint32_t command, uint32_t sub, const uint32_t* words,
         uint32_t word_count, bool capability, uint32_t timeout, std::string&);
 public:
     explicit Session(DownloadChannel&, SessionProgress progress = SessionProgress(), uint32_t timeout_override_ms = 0);
-    EJODIN4_Status begin(std::vector<EJODIN4_PitEntry>& live_pit, std::string& error, uint64_t planned_total = 0);
+    EJODIN4_Status begin(std::vector<EJODIN4_PitEntry>& live_pit, std::string& error, uint64_t planned_total = 0, const FirmwareIdentity* identity = 0);
     EJODIN4_Status notify_total(uint64_t total, std::string& error);
     EJODIN4_Status validate_image(const PlanImage&, std::string&);
-    EJODIN4_Status send_image(const PlanImage&, ImageReader&, std::string& error);
+    bool compression_supported() const;
+    EJODIN4_Status send_image(const PlanImage&, ImageReader&, std::string& error, EncodedImageReader* encoded = 0);
     EJODIN4_Status finish(bool reboot, std::string& error);
     EJODIN4_Status close(std::string& error);
     const SessionState& state() const { return state_; }

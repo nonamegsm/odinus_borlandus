@@ -212,4 +212,4 @@ void test_trailers() {
 }
 }
 
-int main(){try{check(EJODIN4_GetAbiVersion()==UINT32_C(0x1000a),"Native ABI version");test_requests();test_pit();test_responses();test_trailers();std::cout<<"PASS native classic BCC core: "<<checks<<" checks; no DLL loads or device I/O\n";return 0;}catch(const std::exception& error){std::cerr<<"FAIL after "<<checks<<": "<<error.what()<<"\n";return 1;}}
+int main(){try{check(EJODIN4_GetAbiVersion()==UINT32_C(0x1000b),"Native ABI version");test_requests();test_pit();test_responses();test_trailers();std::cout<<"PASS native classic BCC core: "<<checks<<" checks; no DLL loads or device I/O\n";return 0;}catch(const std::exception& error){std::cerr<<"FAIL after "<<checks<<": "<<error.what()<<"\n";return 1;}}

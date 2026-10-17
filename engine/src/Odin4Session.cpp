@@ -19,7 +19,7 @@ uint32_t stock_sequence_bytes(const EJODIN4_PitEntry& route) {
 uint32_t le32(const uint8_t* p) { return uint32_t(p[0])|uint32_t(p[1])<<8|uint32_t(p[2])<<16|uint32_t(p[3])<<24; }
 void put32(uint8_t* p,uint32_t v) { for(unsigned i=0;i<4;++i) p[i]=uint8_t(v>>(i*8)); }
 }
-Session::Session(DownloadChannel& c,SessionProgress p,uint32_t timeout):channel_(c),progress_(p),packet_bytes_(131072),flash_timeout_(30000),timeout_override_(timeout),begun_(false),failed_(false),total_set_(false),metadata_baseline_set_(false),metadata_baseline_tail_(false),total_(0) {
+Session::Session(DownloadChannel& c,SessionProgress p,uint32_t timeout):channel_(c),progress_(p),packet_bytes_(131072),flash_timeout_(30000),timeout_override_(timeout),begun_(false),failed_(false),total_set_(false),identity_validated_(false),metadata_baseline_set_(false),metadata_baseline_tail_(false),total_(0) {
     state_.transport=c.transport(); if(timeout) flash_timeout_=timeout;
 }
 void Session::phase(uint32_t p) { state_.phase=p; if(progress_) progress_(state_); }
@@ -57,7 +57,7 @@ EJODIN4_Status Session::command(uint32_t cmd,uint32_t sub,const uint32_t* words,
     if(s!=EJODIN4_OK) return fail(s,"Write Odin request failed",error);
     return response(cmd,capability,timeout,error,cmd==0x64 && sub==1);
 }
-EJODIN4_Status Session::begin(std::vector<EJODIN4_PitEntry>& output,std::string& error,uint64_t planned_total) {
+EJODIN4_Status Session::begin(std::vector<EJODIN4_PitEntry>& output,std::string& error,uint64_t planned_total,const FirmwareIdentity* identity) {
     if(begun_ || failed_ || !channel_.opened()) { error="Odin session cannot begin"; return EJODIN4_INVALID_ARGUMENT; }
     state_.transport=channel_.transport();
     phase(EJODIN4_PHASE_HANDSHAKE);
@@ -71,12 +71,13 @@ EJODIN4_Status Session::begin(std::vector<EJODIN4_PitEntry>& output,std::string&
     const bool stock=channel_.transport()==EJODIN4_DOWNLOAD_SAMSUNG_SERIAL;
     state_.protocol_version=(state_.negotiation_ack>>16)&(stock?0xffffu:0x7fffu);
     phase(EJODIN4_PHASE_NEGOTIATING);
-    // Versions 4/5 require native DEVINFO and device-policy validation, which
-    // this raw engine does not implement. Do not enter a partial newer flow.
-    if(state_.protocol_version<1 || state_.protocol_version>3) {
-        error="Unsupported Samsung Download protocol "+decimal(state_.protocol_version)+
-            "; reviewed raw versions are 1..3. Versions 4/5 require unimplemented DEVINFO validation";
+    if(state_.protocol_version<1 || state_.protocol_version>5 || (!stock&&state_.protocol_version>3)) {
+        error="Unsupported Samsung Download protocol "+decimal(state_.protocol_version)+(stock?"; native stock-driver dialects are 1..5":"; reviewed WinUSB dialects are 1..3");
         return fail(EJODIN4_DRIVER_UNSUPPORTED,"Unsupported Odin protocol",error);
+    }
+    if(state_.protocol_version>=4 && identity && (!identity->present || identity->model.empty())) {
+        DeviceInfo unknown;const EJODIN4_Status status=validate_device_identity(unknown,*identity,state_.protocol_version,error);
+        return fail(status,"Missing authenticated package identity",error);
     }
     if(state_.protocol_version>1) {
         packet_bytes_=1048576; if(!timeout_override_) flash_timeout_=120000;
@@ -88,6 +89,17 @@ EJODIN4_Status Session::begin(std::vector<EJODIN4_PitEntry>& output,std::string&
     if(planned_total && channel_.transport()==EJODIN4_DOWNLOAD_SAMSUNG_SERIAL) {
         s=announce_total(planned_total,error);
         if(s!=EJODIN4_OK) return s;
+    }
+    if(state_.protocol_version>=4){
+        s=read_device_info(error);if(s!=EJODIN4_OK)return s;
+        if(identity){
+            s=validate_device_identity(device_info_,*identity,state_.protocol_version,error);
+            if(s!=EJODIN4_OK)return fail(s,"Firmware DEVINFO identity rejected",error);
+            identity_validated_=true;
+        }else if(planned_total){
+            error="Authenticated firmware identity metadata is required before newer-protocol writes";
+            return fail(EJODIN4_DRIVER_UNSUPPORTED,"Missing firmware identity",error);
+        }
     }
     s=command(0x65,1,0,0,false,channel_.timeout(),error);
     if(s!=EJODIN4_OK) return s;
@@ -135,6 +147,26 @@ EJODIN4_Status Session::begin(std::vector<EJODIN4_PitEntry>& output,std::string&
     phase(EJODIN4_PHASE_PIT_READY);
     return EJODIN4_OK;
 }
+EJODIN4_Status Session::read_device_info(std::string& error) {
+    EJODIN4_Status status=command(0x69,0,0,0,false,channel_.timeout(),error);
+    if(status!=EJODIN4_OK)return status;
+    const uint32_t size=state_.last_ack;
+    if(size<500||size>1000000||size%500){error="Samsung DEVINFO size is outside bounded 500-byte records";return fail(EJODIN4_INVALID_RESPONSE,"Invalid DEVINFO size",error);}
+    std::vector<uint8_t> bytes(size);
+    for(uint32_t offset=0,index=0;offset<size;offset+=500,++index){
+        uint8_t request[1024]={0};put32(request,0x69);put32(request+4,1);put32(request+8,index);
+        const uint32_t timeout=timeout_override_?timeout_override_:channel_.timeout();
+        status=channel_.write_exact(request,sizeof(request),timeout,error);
+        if(status!=EJODIN4_OK)return fail(status,"DEVINFO block request failed",error);
+        status=channel_.read_exact((&bytes[0])+offset,500,timeout,error);
+        if(status!=EJODIN4_OK)return fail(status,"DEVINFO block read failed",error);
+    }
+    status=command(0x69,2,0,0,false,channel_.timeout(),error);
+    if(status!=EJODIN4_OK)return status;
+    status=parse_device_info(bytes,state_.protocol_version,device_info_,error);
+    if(status!=EJODIN4_OK)return fail(status,"Samsung DEVINFO rejected",error);
+    return EJODIN4_OK;
+}
 EJODIN4_Status Session::notify_total(uint64_t total,std::string& error) {
     if(!begun_ || failed_ || total_set_ || !total) { error="Invalid Odin transfer total";return EJODIN4_INVALID_ARGUMENT; }
     return announce_total(total,error);
@@ -150,6 +182,7 @@ EJODIN4_Status Session::announce_total(uint64_t total,std::string& error) {
 }
 EJODIN4_Status Session::validate_image(const PlanImage& image,std::string& error) {
     if(!begun_ || failed_) {error="Odin session cannot validate image routes";return EJODIN4_INVALID_ARGUMENT;}
+    if(state_.protocol_version>=4&&!identity_validated_){error="Firmware identity was not authenticated for this device";return fail(EJODIN4_DRIVER_UNSUPPORTED,"Missing DEVINFO identity validation",error);}
     if(channel_.transport()==EJODIN4_DOWNLOAD_SAMSUNG_SERIAL && !stock_sequence_bytes(image.route)) {
         error="Unsupported Samsung stock-driver image route: binary type "+decimal(image.route.binary_type)+
             ", device type "+decimal(image.route.device_type)+"; no reviewed raw transfer flow";
@@ -157,16 +190,88 @@ EJODIN4_Status Session::validate_image(const PlanImage& image,std::string& error
     }
     return EJODIN4_OK;
 }
-EJODIN4_Status Session::send_image(const PlanImage& image,ImageReader& reader,std::string& error) {
+bool Session::compression_supported() const {
+    return channel_.transport()==EJODIN4_DOWNLOAD_SAMSUNG_SERIAL &&
+        state_.protocol_version>=3 && (state_.negotiation_ack&0x8000u)!=0;
+}
+EJODIN4_Status Session::send_encoded_image(const PlanImage& image,EncodedImageReader& reader,std::string& error) {
+    if(!compression_supported()) {
+        error="Native encoded transfer was not negotiated";
+        return fail(EJODIN4_DRIVER_UNSUPPORTED,"Unsupported encoded transfer",error);
+    }
+    const uint32_t sequence_limit=stock_sequence_bytes(image.route);
+    const uint64_t records_limit=uint64_t(sequence_limit)+8u*(sequence_limit/65536u+1u);
+    uint64_t remaining=image.decoded_bytes;
+    while(remaining) {
+        EJODIN4_Status s=channel_.interrupted(error);
+        if(s!=EJODIN4_OK)return fail(s,"Encoded sequence cancelled",error);
+        const uint32_t expected=uint32_t(std::min<uint64_t>(remaining,sequence_limit));
+        uint32_t decoded=0;
+        std::vector<uint8_t> records;
+        s=reader.read_sequence(expected,records,decoded,channel_.cancellation(),error);
+        if(s!=EJODIN4_OK)return fail(s,"Encoded sequence preparation failed",error);
+        if(decoded!=expected || records.empty() || records.size()>records_limit) {
+            error="Encoded sequence differs from the validated image bounds";
+            return fail(EJODIN4_INVALID_COMPRESSED_DATA,"Invalid encoded sequence",error);
+        }
+        const bool last=remaining==decoded;
+        if(last) {
+            uint32_t extra_decoded=0;std::vector<uint8_t> extra;
+            s=reader.read_sequence(sequence_limit,extra,extra_decoded,channel_.cancellation(),error);
+            if(s!=EJODIN4_OK)return fail(s,"Encoded image EOF verification failed",error);
+            if(extra_decoded || !extra.empty()) {
+                error="Encoded image exceeds its validated decoded size";
+                return fail(EJODIN4_INVALID_COMPRESSED_DATA,"Encoded image size mismatch",error);
+            }
+        }
+        const uint32_t stored=uint32_t(records.size());
+        const uint32_t aligned=((stored+packet_bytes_-1u)/packet_bytes_)*packet_bytes_;
+        records.resize(aligned,0);
+        s=channel_.interrupted(error);
+        if(s!=EJODIN4_OK)return fail(s,"Encoded sequence cancelled before submission",error);
+        // All local reading and verification precede the first modifying command.
+        state_.any_write=true;
+        phase(EJODIN4_PHASE_IMAGE_BEGIN);
+        s=command(0x66,5,0,0,false,channel_.timeout(),error);
+        if(s!=EJODIN4_OK)return s;
+        const uint32_t sizes[]={stored,decoded};
+        s=command(0x66,6,sizes,2,false,channel_.timeout(),error);
+        if(s!=EJODIN4_OK)return s;
+        for(uint32_t offset=0,index=0;offset<aligned;offset+=packet_bytes_,++index) {
+            s=channel_.write_exact((&records[0])+offset,packet_bytes_,flash_timeout_,error);
+            if(s!=EJODIN4_OK)return fail(s,"Encoded image packet write failed",error);
+            s=response(0,false,flash_timeout_,error);
+            if(s!=EJODIN4_OK)return s;
+            if(state_.last_ack!=index) {
+                error="Odin encoded packet acknowledgement index mismatch";
+                return fail(EJODIN4_INVALID_RESPONSE,"Wrong encoded packet index",error);
+            }
+            // Packet ACKs prove stored records, not decoded partition bytes.
+            phase(EJODIN4_PHASE_DATA_ACK);
+        }
+        const uint32_t words[]={0,decoded,image.route.binary_type,image.route.device_type,
+            image.route.identifier,last?1u:0u,0,0};
+        s=command(0x66,7,words,8,false,flash_timeout_,error);
+        if(s!=EJODIN4_OK)return s;
+        state_.acknowledged_bytes+=decoded;state_.image_acknowledged_bytes+=decoded;
+        phase(EJODIN4_PHASE_DATA_ACK);
+        remaining-=decoded;
+    }
+    ++state_.images_completed;
+    phase(EJODIN4_PHASE_IMAGE_COMPLETE);
+    return EJODIN4_OK;
+}
+EJODIN4_Status Session::send_image(const PlanImage& image,ImageReader& reader,std::string& error,EncodedImageReader* encoded) {
     if(!begun_ || failed_ || !total_set_ || !image.decoded_bytes || image.decoded_bytes>total_-state_.acknowledged_bytes) {
         error="Invalid Odin image or transfer state";return EJODIN4_INVALID_ARGUMENT;
     }
     const EJODIN4_Status validated=validate_image(image,error);
     if(validated!=EJODIN4_OK)return validated;
     state_.image_acknowledged_bytes=0;
+    if(encoded)return send_encoded_image(image,*encoded,error);
     uint64_t remaining=image.decoded_bytes;
     bool first=true;
-    // The native raw dispatcher uses the same framing for versions 1..3;
+    // The native raw dispatcher uses the same framing for versions 1..5;
     // legacy negotiation changes packet size, not sequence begin/completion.
     const bool native_raw=channel_.transport()==EJODIN4_DOWNLOAD_SAMSUNG_SERIAL;
     const uint32_t sequence_limit=native_raw?stock_sequence_bytes(image.route):sequence_bytes;

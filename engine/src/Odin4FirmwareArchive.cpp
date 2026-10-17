@@ -446,6 +446,106 @@ public:
         catch (...) { error = "Image reader exception"; return EJODIN4_INTERNAL_ERROR; }
     }
 };
+class EncodedMemberReader : public ejodin4::EncodedImageReader {
+    const File& file_; EJODIN4_ArchiveEntry entry_; ejodin4::PlanImage image_;
+    Decoder decoder_; HCRYPTPROV provider_; HCRYPTHASH hash_;
+    uint64_t position_,decoded_;uint32_t block_max_;
+    bool initialized_,ended_,unsupported_short_,audit_only_;
+    bool block_checksum_,content_checksum_;
+    static uint32_t word(const unsigned char* p){return uint32_t(p[0])|uint32_t(p[1])<<8|uint32_t(p[2])<<16|uint32_t(p[3])<<24;}
+    void read(void* data,uint32_t bytes,const Cancellation& cancel){
+        if(position_>entry_.data_bytes||bytes>entry_.data_bytes-position_)fail(EJODIN4_INVALID_COMPRESSED_DATA,"Encoded LZ4 record is truncated");
+        file_.seek(entry_.data_offset+position_);file_.read(data,bytes,cancel);position_+=bytes;
+    }
+
+    void start_hash(){
+        if(!CryptAcquireContextW(&provider_,0,0,PROV_RSA_AES,CRYPT_VERIFYCONTEXT)||!CryptCreateHash(provider_,0x0000800c,0,0,&hash_))
+            fail(EJODIN4_INTERNAL_ERROR,"Cannot initialize encoded image SHA256");
+    }
+    void check_digest(){
+        bcc::Array<unsigned char,32> digest;DWORD bytes=32;
+        if(!CryptGetHashParam(hash_,HP_HASHVAL,digest.data(),&bytes,0)||bytes!=32)fail(EJODIN4_INTERNAL_ERROR,"Encoded image SHA256 completion failed");
+        if(decoded_!=image_.decoded_bytes||digest!=image_.digest)fail(EJODIN4_CHECKSUM_MISMATCH,"Encoded image second-pass SHA256 differs from plan");
+    }
+    void initialize(const Cancellation& cancel){
+        if(initialized_)return;
+        if(!(entry_.flags&EJODIN4_ARCHIVE_ENTRY_LZ4))fail(EJODIN4_DRIVER_UNSUPPORTED,"Raw image has no encoded LZ4 records");
+        unsigned char header[19]={0};read(header,6,cancel);
+        if(word(header)!=UINT32_C(0x184d2204))fail(EJODIN4_INVALID_COMPRESSED_DATA,"Invalid encoded LZ4 frame magic");
+        const size_t length=7+((header[4]&8)?8:0)+((header[4]&1)?4:0);read(header+6,static_cast<uint32_t>(length-6),cancel);
+        LZ4F_frameInfo_t info;std::memset(&info,0,sizeof(info));size_t consumed=length;
+        const size_t hint=LZ4F_getFrameInfo(decoder_.context,&info,header,&consumed);
+        if(LZ4F_isError(hint)||consumed!=length||info.frameType!=LZ4F_frame)fail(EJODIN4_INVALID_COMPRESSED_DATA,"Invalid encoded LZ4 frame header/checksum");
+        if((header[4]&8)&&info.contentSize!=image_.decoded_bytes)fail(EJODIN4_CHECKSUM_MISMATCH,"Encoded LZ4 declared size differs from planned image");
+        if(!(header[4]&8)||!(header[4]&0x20)||(header[4]&1)||info.blockSizeID<LZ4F_max64KB||info.blockSizeID>LZ4F_max1MB)
+            fail(EJODIN4_DRIVER_UNSUPPORTED,"LZ4 frame profile requires host decoding");
+        block_max_=info.blockSizeID==LZ4F_max64KB?65536:info.blockSizeID==LZ4F_max256KB?262144:1048576;
+        block_checksum_=(header[4]&0x10)!=0;content_checksum_=(header[4]&4)!=0;
+        start_hash();initialized_=true;
+    }
+    void finish(const Cancellation& cancel){
+        unsigned char footer[8]={0};const uint32_t length=content_checksum_?8:4;read(footer,length,cancel);
+        if(word(footer))fail(EJODIN4_INVALID_COMPRESSED_DATA,"Encoded LZ4 exceeds declared image length");
+        unsigned char unused=0;size_t consumed=length,produced=1;
+        const size_t hint=LZ4F_decompress(decoder_.context,&unused,&produced,footer,&consumed,0);
+        if(LZ4F_isError(hint)||hint||produced||consumed!=length||position_!=entry_.data_bytes)
+            fail(EJODIN4_INVALID_COMPRESSED_DATA,"Encoded LZ4 footer/content checksum or frame end is invalid");
+        check_digest();cancel.check();ended_=true;
+    }
+public:
+    EncodedMemberReader(const File& file,const EJODIN4_ArchiveEntry& entry,const ejodin4::PlanImage& image,bool audit_only=false):file_(file),entry_(entry),image_(image),provider_(0),hash_(0),position_(0),decoded_(0),block_max_(0),initialized_(false),ended_(false),unsupported_short_(false),audit_only_(audit_only),block_checksum_(false),content_checksum_(false){}
+    ~EncodedMemberReader(){if(hash_)CryptDestroyHash(hash_);if(provider_)CryptReleaseContext(provider_,0);}
+    // A fallback is permitted only after validating the complete alternate frame.
+    EJODIN4_Status validate_host_profile(const ejodin4::Cancellation& cancel,std::string& error,const ejodin4::ArchiveScanCallback& progress){
+        try{
+            start_hash();MemberReader reader(file_,entry_,image_.decoded_bytes);std::vector<uint8_t> output(65536);
+            uint32_t bytes=0;do{
+                const EJODIN4_Status status=reader.read(vector_data(output),static_cast<uint32_t>(output.size()),bytes,cancel,error);if(status!=EJODIN4_OK)return status;
+                if(bytes>image_.decoded_bytes-decoded_)fail(EJODIN4_CHECKSUM_MISMATCH,"Host-decoded fallback exceeds planned size");
+                if(bytes&&!CryptHashData(hash_,vector_data(output),bytes,0))fail(EJODIN4_INTERNAL_ERROR,"Fallback image SHA256 update failed");
+                decoded_+=bytes;if(progress)progress(decoded_,image_.decoded_bytes);
+            }while(bytes);
+            check_digest();if(cancel.requested())fail(EJODIN4_CANCELLED,"Encoded profile audit cancelled");return EJODIN4_OK;
+        }catch(const Failure& failure){error=failure.message;return failure.status;}
+        catch(...){error="Fallback image audit exception";return EJODIN4_INTERNAL_ERROR;}
+    }
+    bool unsupported_short_blocks()const{return unsupported_short_;}
+    EJODIN4_Status read_sequence(uint32_t limit,std::vector<uint8_t>& records,uint32_t& count,
+        const ejodin4::Cancellation& cancellation,std::string& error){
+        records.clear();count=0;
+        try{
+            const Cancellation cancel(cancellation.callback,cancellation.context);cancel.check();initialize(cancel);
+            if(!limit||limit>30u*1024*1024)fail(EJODIN4_INVALID_ARGUMENT,"Encoded sequence limit must be within 30 MiB");
+            if(ended_)return EJODIN4_OK;
+            std::vector<uint8_t> pending,output(block_max_+1);uint32_t decoded_sequence=0;
+            while(decoded_<image_.decoded_bytes){
+                cancel.check();const uint64_t remaining=image_.decoded_bytes-decoded_;
+                if(std::min(uint64_t(block_max_),remaining)>limit-decoded_sequence){
+                    if(!decoded_sequence)fail(EJODIN4_INVALID_ARGUMENT,"Encoded sequence limit cannot fit one LZ4 block");
+                    break;
+                }
+                unsigned char length[4]={0};read(length,4,cancel);const uint32_t raw=word(length),stored=raw&UINT32_C(0x7fffffff);
+                if(!stored||stored>block_max_)fail(EJODIN4_INVALID_COMPRESSED_DATA,"Invalid encoded LZ4 block length");
+                std::vector<uint8_t> record(size_t(stored)+4+(block_checksum_?4:0));std::memcpy(vector_data(record),length,4);read(vector_data(record)+4,static_cast<uint32_t>(record.size()-4),cancel);
+                size_t consumed=record.size(),produced=output.size();const size_t hint=LZ4F_decompress(decoder_.context,vector_data(output),&produced,vector_data(record),&consumed,0);
+                if(LZ4F_isError(hint)||!hint||consumed!=record.size()||!produced||produced>block_max_||produced>remaining)
+                    fail(EJODIN4_INVALID_COMPRESSED_DATA,"Encoded LZ4 block decoding or checksum failed");
+                decoded_+=produced;if(decoded_<image_.decoded_bytes&&produced!=block_max_){
+                    if(!audit_only_)fail(EJODIN4_INVALID_COMPRESSED_DATA,"Encoded LZ4 block geometry changed after audit");
+                    unsupported_short_=true;
+                }
+                if(produced>limit-decoded_sequence)fail(EJODIN4_INVALID_COMPRESSED_DATA,"Encoded LZ4 sequence exceeds decoded limit");
+                if(!CryptHashData(hash_,vector_data(output),static_cast<DWORD>(produced),0))fail(EJODIN4_INTERNAL_ERROR,"Encoded image SHA256 update failed");
+                if(!audit_only_)pending.insert(pending.end(),record.begin(),record.end());
+                decoded_sequence+=static_cast<uint32_t>(produced);
+            }
+            if(decoded_==image_.decoded_bytes)finish(cancel);
+            cancel.check();records.swap(pending);count=decoded_sequence;return EJODIN4_OK;
+        }catch(const Failure& failure){error=failure.message;return failure.status;}
+        catch(...){error="Encoded image reader exception";return EJODIN4_INTERNAL_ERROR;}
+    }
+};
+
 uint64_t decode_entry(const File& file, const EJODIN4_ArchiveEntry& entry,
                       uint64_t limit, uint64_t& total, std::vector<uint8_t>* pit,
                       const Cancellation& cancellation) {
@@ -629,12 +729,38 @@ namespace ejodin4 {
 namespace {
 class NativeArchive  : public HeldArchive {
 public:
+    EJODIN4_Status open_encoded_member(size_t index,const PlanImage& image,
+        std::unique_ptr<EncodedImageReader>& reader,std::string& error,
+        const ejodin4::Cancellation& cancel,const ArchiveScanCallback& progress) {
+        reader.reset();if(index>=entries.size()){error="Invalid encoded member index";return EJODIN4_INVALID_ARGUMENT;}
+        EJODIN4_Status status=verify_unchanged(error);if(status!=EJODIN4_OK)return status;
+        try{
+            // Full bounded preflight rules out short intermediate blocks before any image command.
+            EncodedMemberReader audit(file,entries[index],image,true);std::vector<uint8_t> records;uint32_t bytes=0;uint64_t total=0;
+            do{status=audit.read_sequence(30u*1024*1024,records,bytes,cancel,error);
+                if(status==EJODIN4_DRIVER_UNSUPPORTED){const EJODIN4_Status checked=audit.validate_host_profile(cancel,error,progress);return checked==EJODIN4_OK?status:checked;}
+                if(status!=EJODIN4_OK)return status;
+                total+=bytes;if(progress)progress(total,image.decoded_bytes);
+            }while(bytes);
+            if(audit.unsupported_short_blocks()){error="Short intermediate LZ4 blocks require host decoding";return EJODIN4_DRIVER_UNSUPPORTED;}
+            status=verify_unchanged(error);if(status!=EJODIN4_OK)return status;
+            reader.reset(new EncodedMemberReader(file,entries[index],image));return EJODIN4_OK;
+        }catch(const Failure& failure){error=failure.message;return failure.status;}
+        catch(...){error="Cannot create bounded encoded reader";return EJODIN4_INTERNAL_ERROR;}
+    }
+
     File file;
     BY_HANDLE_FILE_INFORMATION before;
     NativeArchive(){std::memset(&before,0,sizeof(before));}
     EJODIN4_Status verify_unchanged(std::string& error) const  {
         try { unchanged(file,before,"Held firmware archive changed"); return EJODIN4_OK; }
         catch (const Failure& failure) { error=failure.message; return failure.status; }
+    }
+    EJODIN4_Status open_stored_member(size_t index,std::unique_ptr<ImageReader>& reader,std::string& error) {
+        if(index>=entries.size()){error="Invalid stored archive member";return EJODIN4_INVALID_ARGUMENT;}
+        const EJODIN4_Status status=verify_unchanged(error);if(status!=EJODIN4_OK)return status;
+        try {EJODIN4_ArchiveEntry entry=entries[index];entry.flags&=~uint32_t(EJODIN4_ARCHIVE_ENTRY_LZ4);reader.reset(new MemberReader(file,entry));return EJODIN4_OK;}
+        catch(...){error="Cannot create stored archive reader";return EJODIN4_INTERNAL_ERROR;}
     }
     EJODIN4_Status open_member(size_t index, std::unique_ptr<ImageReader>& reader,
         std::string& error)  {

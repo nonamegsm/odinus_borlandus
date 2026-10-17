@@ -49,7 +49,10 @@
   </PropertyGroup>
   <ItemGroup>
     <CppCompile Include="src\Main.cpp"><BuildOrder>0</BuildOrder></CppCompile>
-    <CppCompile Include="engine\src\*.cpp"/><CppCompile Include="engine\vendor\lz4\*.c"/>
+    <CppCompile Include="engine\src\*.cpp" Exclude="engine\src\Odin4FirmwareIdentity.cpp"/>
+    <CppCompile Include="engine\src\Odin4FirmwareIdentity.cpp"/>
+    <None Include="engine\src\Odin4FirmwareIdentity.h"/>
+    <None Include="engine\src\Odin4DeviceInfo.h"/><CppCompile Include="engine\vendor\lz4\*.c"/>
     <None Include="src\UiLogic.h"/>
     <None Include="build.py"/><None Include="build.ps1"/>
     <None Include="README.md"/>

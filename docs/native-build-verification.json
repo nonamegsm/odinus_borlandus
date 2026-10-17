@@ -1,12 +1,12 @@
 {
   "sync": {
     "date": "2026-10-17",
-    "easyjtag_revision": "c69a9b2826ba7e54483bd0feaeaeb9ec737d054f",
-    "bcc_base_revision": "00c8c106f22b27085615bb87ec7af345b0db27fc",
-    "native_checks_per_configuration": 1668755,
+    "easyjtag_revision": "4822cce0370f61254f151e93cb83fba9adb2e78b",
+    "bcc_base_revision": "e75012c",
+    "native_checks_per_configuration": 11407668,
     "manifest_regressions": 7,
     "physical_device_operations": 0,
-    "abi_version": 65546,
+    "abi_version": 65547,
     "pit_units": {
       "2": 512,
       "8": 4096
@@ -17,10 +17,10 @@
     "Debug": {
       "executable": {
         "file": "OdinBCC.exe",
-        "sha256": "cb411921b1b8d3d3e5f995b479a56692bf2759a362e9f30037839743628afa02",
-        "bytes": 796160
+        "sha256": "c14f5d3c6b7380ecf8f3da28ba8aa482d59cf26943c66dd774aa6ac006c92c04",
+        "bytes": 873472
       },
-      "objects": 15,
+      "objects": 16,
       "imports": [
         "ADVAPI32.DLL",
         "COMCTL32.DLL",
@@ -35,56 +35,74 @@
         {
           "target": "native_static_probe",
           "compiler_exit": 0,
-          "static_engine_objects": 14,
+          "static_engine_objects": 15,
           "private_dll": false,
           "exit_code": 0,
           "output": "PASS native classic BCC core: 832 checks; no DLL loads or device I/O\n",
-          "seconds": 0.534
+          "seconds": 0.589
         },
         {
           "target": "native_archive_tests",
           "compiler_exit": 0,
-          "static_engine_objects": 14,
+          "static_engine_objects": 15,
           "private_dll": false,
           "exit_code": 0,
           "output": "PASS native classic BCC archive: 173 checks; no DLL or device I/O\n",
-          "seconds": 0.553
+          "seconds": 0.637
         },
         {
           "target": "native_streaming_tests",
           "compiler_exit": 0,
-          "static_engine_objects": 14,
+          "static_engine_objects": 15,
           "private_dll": false,
           "exit_code": 0,
-          "output": "native streaming: 164 checks passed\n",
-          "seconds": 0.602
+          "output": "native streaming: 845 checks passed\n",
+          "seconds": 2.122
         },
         {
           "target": "native_session_tests",
           "compiler_exit": 0,
-          "static_engine_objects": 14,
+          "static_engine_objects": 15,
           "private_dll": false,
           "exit_code": 0,
-          "output": "Native BCC session fake tests passed (1667221 checks)\n",
-          "seconds": 6.075
+          "output": "Native BCC session fake tests passed (11405308 checks)\n",
+          "seconds": 6.868
         },
         {
           "target": "native_transport_tests",
           "compiler_exit": 0,
-          "static_engine_objects": 14,
+          "static_engine_objects": 15,
           "private_dll": false,
           "exit_code": 0,
           "output": "Native BCC fake USB transport tests passed: 299 checks\n",
-          "seconds": 0.364
+          "seconds": 0.408
+        },
+        {
+          "target": "native_firmware_identity_tests",
+          "compiler_exit": 0,
+          "static_engine_objects": 15,
+          "private_dll": false,
+          "exit_code": 0,
+          "output": "Signed manifest tests passed: 112 checks; no manufacturer-private-key fixture is available.\n",
+          "seconds": 0.982
+        },
+        {
+          "target": "native_device_info_tests",
+          "compiler_exit": 0,
+          "static_engine_objects": 15,
+          "private_dll": false,
+          "exit_code": 0,
+          "output": "PASS DEVINFO parser/policy: 21 checks; no device I/O\n",
+          "seconds": 0.294
         },
         {
           "target": "ui_logic_tests",
           "compiler_exit": 0,
-          "static_engine_objects": 14,
+          "static_engine_objects": 15,
           "private_dll": false,
           "exit_code": 0,
-          "output": "PASS BCC UI logic: 66 checks; no device I/O\n",
-          "seconds": 0.249
+          "output": "PASS BCC UI logic: 78 checks; no device I/O\n",
+          "seconds": 0.28
         }
       ],
       "uiCases": [
@@ -101,10 +119,10 @@
     "Release": {
       "executable": {
         "file": "OdinBCC.exe",
-        "sha256": "b6ed23784c4b06778c035f5ecbd301a0cfc343c2ce4037b1f06ff6d8b4bdb43b",
-        "bytes": 1884672
+        "sha256": "51c3fc3dc4a7b4f2c1fb1124acb646218298f6c03cc7b9feab09368be46030a2",
+        "bytes": 2170880
       },
-      "objects": 15,
+      "objects": 16,
       "imports": [
         "ADVAPI32.DLL",
         "COMCTL32.DLL",
@@ -119,56 +137,74 @@
         {
           "target": "native_static_probe",
           "compiler_exit": 0,
-          "static_engine_objects": 14,
+          "static_engine_objects": 15,
           "private_dll": false,
           "exit_code": 0,
           "output": "PASS native classic BCC core: 832 checks; no DLL loads or device I/O\n",
-          "seconds": 0.464
+          "seconds": 0.55
         },
         {
           "target": "native_archive_tests",
           "compiler_exit": 0,
-          "static_engine_objects": 14,
+          "static_engine_objects": 15,
           "private_dll": false,
           "exit_code": 0,
           "output": "PASS native classic BCC archive: 173 checks; no DLL or device I/O\n",
-          "seconds": 0.554
+          "seconds": 0.933
         },
         {
           "target": "native_streaming_tests",
           "compiler_exit": 0,
-          "static_engine_objects": 14,
+          "static_engine_objects": 15,
           "private_dll": false,
           "exit_code": 0,
-          "output": "native streaming: 164 checks passed\n",
-          "seconds": 0.526
+          "output": "native streaming: 845 checks passed\n",
+          "seconds": 2.408
         },
         {
           "target": "native_session_tests",
           "compiler_exit": 0,
-          "static_engine_objects": 14,
+          "static_engine_objects": 15,
           "private_dll": false,
           "exit_code": 0,
-          "output": "Native BCC session fake tests passed (1667221 checks)\n",
-          "seconds": 6.164
+          "output": "Native BCC session fake tests passed (11405308 checks)\n",
+          "seconds": 6.891
         },
         {
           "target": "native_transport_tests",
           "compiler_exit": 0,
-          "static_engine_objects": 14,
+          "static_engine_objects": 15,
           "private_dll": false,
           "exit_code": 0,
           "output": "Native BCC fake USB transport tests passed: 299 checks\n",
-          "seconds": 0.348
+          "seconds": 0.376
+        },
+        {
+          "target": "native_firmware_identity_tests",
+          "compiler_exit": 0,
+          "static_engine_objects": 15,
+          "private_dll": false,
+          "exit_code": 0,
+          "output": "Signed manifest tests passed: 112 checks; no manufacturer-private-key fixture is available.\n",
+          "seconds": 0.82
+        },
+        {
+          "target": "native_device_info_tests",
+          "compiler_exit": 0,
+          "static_engine_objects": 15,
+          "private_dll": false,
+          "exit_code": 0,
+          "output": "PASS DEVINFO parser/policy: 21 checks; no device I/O\n",
+          "seconds": 0.645
         },
         {
           "target": "ui_logic_tests",
           "compiler_exit": 0,
-          "static_engine_objects": 14,
+          "static_engine_objects": 15,
           "private_dll": false,
           "exit_code": 0,
-          "output": "PASS BCC UI logic: 66 checks; no device I/O\n",
-          "seconds": 0.223
+          "output": "PASS BCC UI logic: 78 checks; no device I/O\n",
+          "seconds": 0.353
         }
       ],
       "uiCases": [
@@ -202,11 +238,12 @@
   },
   "portable": {
     "path": "dist/OdinBCC.exe",
-    "sha256": "b6ed23784c4b06778c035f5ecbd301a0cfc343c2ce4037b1f06ff6d8b4bdb43b",
-    "bytes": 1884672
+    "sha256": "51c3fc3dc4a7b4f2c1fb1124acb646218298f6c03cc7b9feab09368be46030a2",
+    "bytes": 2170880
   },
   "limits": [
     "No connected phone was enumerated, probed, read or flashed.",
-    "Raw protocols 4/5 remain unsupported until DEVINFO is implemented."
+    "No genuine manufacturer-signed positive manifest or physical v4/v5 test was available.",
+    "WinUSB 4/5, unknown dialects/addressing and unmeasured zero-count USERDATA remain unsupported."
   ]
 }

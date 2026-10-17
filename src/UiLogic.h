@@ -42,6 +42,9 @@ struct ProgressState {
         if((p->phase==2||p->phase==9||p->phase==10||p->phase==11)&&
             (!p->image_count||p->image_index>=p->image_count||!p->package_role||p->package_role>6||
              ((p->phase==2||p->phase==9)&&!(roleMask&(1u<<p->package_role))))) { invalid=true;return false; }
+        if(p->phase==EJODIN4_PHASE_PREFLIGHT){
+            verifyPhase=verifyIndex=0;verifyName.clear();verifyCompleted=verifyTotal=0;
+        }
         if(!verification) {
             if(p->acknowledged_bytes<acknowledged){invalid=true;return false;}
             acknowledged=p->acknowledged_bytes;
@@ -70,7 +73,7 @@ inline Completion completion(const EJODIN4_FlashResult& r,EJODIN4_Status status,
     out.valid=true;
     out.rebootWarning=write&&reboot&&!cancelled&&!(state.terminalPhases&2)&&state.rebootPending&&
         status==EJODIN4_USB_IO_ERROR&&r.phase==EJODIN4_PHASE_FAILED&&r.last_proven_phase==EJODIN4_PHASE_REBOOT&&
-        r.transport==EJODIN4_DOWNLOAD_SAMSUNG_SERIAL&&r.protocol_version>=1&&r.protocol_version<=3&&r.last_response_id==0x67&&!r.last_ack&&
+        r.transport==EJODIN4_DOWNLOAD_SAMSUNG_SERIAL&&r.protocol_version>=1&&r.protocol_version<=5&&r.last_response_id==0x67&&!r.last_ack&&
         any&&finalized&&!sent&&(r.flags&EJODIN4_FLASH_PIT_MATCHED)&&(r.flags&EJODIN4_FLASH_PLAN_READY)&&r.image_count&&r.total_bytes&&
         r.images_completed==r.image_count&&r.acknowledged_bytes==r.total_bytes;
     if(status!=EJODIN4_OK&&!out.rebootWarning)return out;

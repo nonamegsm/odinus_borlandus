@@ -7,6 +7,8 @@
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
+#include "lz4.h"
+#include "xxhash.h"
 using namespace ejodin4;
 typedef std::vector<uint8_t> Bytes;
 static unsigned checks=0;
@@ -122,4 +124,60 @@ static void second_pass_tests(){
     {FirmwareSet set;set.archives.push_back(new ChangedArchive);PlanImage image;image.decoded_bytes=3;const uint8_t expected[32]={0xba,0x78,0x16,0xbf,0x8f,0x01,0xcf,0xea,0x41,0x41,0x40,0xde,0x5d,0xae,0x22,0x23,0xb0,0x03,0x61,0xa3,0x96,0x17,0x7a,0x9c,0xb4,0x10,0xff,0x61,0xf2,0x00,0x15,0xad};std::copy(expected,expected+32,image.digest.begin());set.images.push_back(image);std::unique_ptr<ImageReader> reader;check(set.open_image(0,reader,error)==EJODIN4_OK,"open changed second pass source");uint8_t out[4];uint32_t actual=0;check(reader->read(out,4,actual,cancel,error)==EJODIN4_OK&&actual==3,"changed source delivers same length");check(reader->read(out,4,actual,cancel,error)==EJODIN4_CHECKSUM_MISMATCH,"changed source SHA fails before validated EOF");reader.reset();}
     check(destroyed==1,"FirmwareSet owns and destroys held archives exactly once");
 }
-int main(int argc,char** argv){try{sparse_tests();planner_tests();second_pass_tests();layout_tests(argc>1?argv[1]:0);generic_capacity_tests();userdata_capacity_identity_tests();std::cout<<"native streaming: "<<checks<<" checks passed"<<std::endl;return 0;}catch(const std::exception& error){std::cerr<<"native streaming failed after "<<checks<<" checks: "<<error.what()<<std::endl;return 1;}}
+Bytes encoded_frame(const std::vector<Bytes>& blocks,bool checksums=true,unsigned block_id=4,bool independent=true,bool sized=true,bool dictionary=false,unsigned checksum_mode=3){
+    uint64_t bytes=0;Bytes content;for(size_t bi=0;bi<blocks.size();++bi){const Bytes& block=blocks[bi];bytes+=block.size();content.insert(content.end(),block.begin(),block.end());}
+    const uint8_t header[]={4,0x22,0x4d,0x18,static_cast<unsigned char>(0x40|(independent?0x20:0)|(sized?8:0)|(checksums?((checksum_mode&1?4:0)|(checksum_mode&2?16:0)):0)|(dictionary?1:0)),static_cast<unsigned char>(block_id<<4)};Bytes frame(header,header+6);
+    if(sized)for(unsigned i=0;i<8;++i)frame.push_back(static_cast<unsigned char>(bytes>>(8*i)));
+    if(dictionary)frame.insert(frame.end(),4,0);
+    frame.push_back(static_cast<unsigned char>(XXH32(&frame[0]+4,frame.size()-4,0)>>8));
+    for(size_t i=0;i<blocks.size();++i){
+        Bytes payload(LZ4_compressBound(static_cast<int>(blocks[i].size())));
+        int n=LZ4_compress_default(reinterpret_cast<const char*>(&blocks[i][0]),reinterpret_cast<char*>(&payload[0]),static_cast<int>(blocks[i].size()),static_cast<int>(payload.size()));
+        check(n>0,"record fixture compress");payload.resize(static_cast<size_t>(n));
+        const bool raw=(i%2)==0;if(raw)payload=blocks[i];size_t at=frame.size();frame.resize(at+4);le32(frame,at,static_cast<uint32_t>(payload.size())|(raw?UINT32_C(0x80000000):0));
+        frame.insert(frame.end(),payload.begin(),payload.end());if(checksums&&(checksum_mode&2)){at=frame.size();frame.resize(at+4);le32(frame,at,XXH32(&payload[0],payload.size(),0));}
+    }
+    frame.insert(frame.end(),4,0);if(checksums&&(checksum_mode&1)){size_t at=frame.size();frame.resize(at+4);le32(frame,at,XXH32(&content[0],content.size(),0));}return frame;
+}
+static EJODIN4_Status prepare_encoded(Temp& temp,const Bytes& frame,std::unique_ptr<FirmwareSet>& set,std::string& error){
+ Bytes tar;append(tar,"boot.img.lz4",frame);append(tar,"layout.pit",pit());std::string p=temp.write(tar);
+ EJODIN4_FirmwareFile file={EJODIN4_PACKAGE_AP,p.c_str(),uint32_t(p.size()+1)};Cancellation c={0,0};
+ return prepare_firmware_set(&file,1,EJODIN4_UPDATE_SELECTED,UINT64_C(64)*1024*1024,c,set,error);
+}
+struct EncodedProgress{uint64_t value;EncodedProgress():value(0){}static void report(void* context,uint64_t n,uint64_t total){check(n<=total,"encoded preflight bounded progress");static_cast<EncodedProgress*>(context)->value=n;}};
+static void encoded_reader_tests(){
+ Temp temp;std::string error;Cancellation none={0,0},cancel={stop,0};std::vector<Bytes> blocks(482,Bytes(65536,'A'));blocks.back().resize(13);Bytes frame=encoded_frame(blocks);std::unique_ptr<FirmwareSet> set;std::unique_ptr<EncodedImageReader> reader;
+ check(prepare_encoded(temp,frame,set,error)==EJODIN4_OK,error.c_str());EncodedProgress progress;
+ check(set->open_encoded_image(0,reader,error,none,ArchiveScanCallback(&EncodedProgress::report,&progress))==EJODIN4_OK,error.c_str());check(progress.value==set->images[0].decoded_bytes,"complete SHA preflight precedes reader publication");
+ Bytes joined,records;uint32_t count=0;uint64_t decoded=0;unsigned sequences=0;
+ do{check(reader->read_sequence(30*1024*1024,records,count,none,error)==EJODIN4_OK,error.c_str());check(count<=30*1024*1024&&records.size()<=30*1024*1024+4096,"bounded encoded sequence");if(count){++sequences;decoded+=count;joined.insert(joined.end(),records.begin(),records.end());}}while(count);
+ check(sequences==2&&decoded==set->images[0].decoded_bytes,"two decoded sequences preserve totals");check(joined==Bytes(frame.begin()+15,frame.end()-8),"original mixed raw/compressed records include checksums and exclude frame envelope");
+ check(reader->read_sequence(30*1024*1024,records,count,none,error)==EJODIN4_OK&&count==0&&records.empty(),"repeat validated encoded EOF");reader.reset();
+ set->images[0].digest[0]^=1;check(set->open_encoded_image(0,reader,error)==EJODIN4_CHECKSUM_MISMATCH&&!reader.get(),"encoded preflight rejects changed SHA");set->images[0].digest[0]^=1;
+ ++set->images[0].decoded_bytes;check(set->open_encoded_image(0,reader,error)==EJODIN4_CHECKSUM_MISMATCH&&!reader.get(),"encoded preflight rejects mismatched planned size");--set->images[0].decoded_bytes;
+ check(set->open_encoded_image(0,reader,error,cancel)==EJODIN4_CANCELLED&&!reader.get(),"encoded preflight cancellation");check(set->open_encoded_image(0,reader,error)==EJODIN4_OK,"reopen encoded reader");
+ check(reader->read_sequence(30*1024*1024,records,count,cancel,error)==EJODIN4_CANCELLED&&records.empty()&&count==0,"cancelled encoded sequence publishes no partial records");reader.reset();set.reset();
+ for(unsigned mode=0;mode<4;++mode){std::vector<Bytes> small(1,Bytes(65536,'x'));small.push_back(Bytes(10,'z'));check(prepare_encoded(temp,encoded_frame(small,true,4,true,true,false,mode),set,error)==EJODIN4_OK,"prepare optional checksum profile");check(set->open_encoded_image(0,reader,error)==EJODIN4_OK,"optional checksums encoded reader");check(reader->read_sequence(30*1024*1024,records,count,none,error)==EJODIN4_OK&&count==65546,"optional checksum decoded totals");reader.reset();set.reset();}
+ for(unsigned profile=0;profile<5;++profile){std::vector<Bytes> small(1,Bytes(3,'x'));if(profile==4)small.push_back(Bytes(3,'y'));Bytes unsupported=encoded_frame(small,true,profile==0?7:4,profile!=1,profile!=2,profile==3);check(prepare_encoded(temp,unsupported,set,error)==EJODIN4_OK,error.c_str());check(set->open_encoded_image(0,reader,error)==EJODIN4_DRIVER_UNSUPPORTED&&!reader.get(),"fully valid unsupported profile requests host decode before writes");set.reset();}
+ for(unsigned id=4;id<=6;++id){std::vector<Bytes> small(1,Bytes(1u<<(8+2*id),'x'));check(prepare_encoded(temp,encoded_frame(small,true,id),set,error)==EJODIN4_OK,"prepare native block profile");check(set->open_encoded_image(0,reader,error)==EJODIN4_OK,"64/256/1024KiB native profiles");check(reader->read_sequence(1,records,count,none,error)==EJODIN4_INVALID_ARGUMENT&&count==0&&records.empty(),"too-small sequence publishes no records");reader.reset();set.reset();}
+ for(unsigned profile=4;profile<=7;profile+=3){std::vector<Bytes> small(1,Bytes(65536,'x'));small.push_back(Bytes(3,'y'));Bytes valid=encoded_frame(small,true,profile);
+ for(unsigned damage=0;damage<5;++damage){Bytes broken=valid;if(damage==0)broken[14]^=1;else if(damage==1)broken[20]^=1;else if(damage==2)broken.back()^=1;else if(damage==3)broken.pop_back();else broken.push_back(0);Bytes tar;append(tar,"boot.img.lz4",broken);std::string p=temp.write(tar);EJODIN4_FirmwareFile file={2,p.c_str(),uint32_t(p.size()+1)};std::unique_ptr<HeldArchive> held;check(open_held_archive(file,none,held,error)==EJODIN4_OK,"held corrupt frame fixture");PlanImage planned;planned.decoded_bytes=65539;EJODIN4_Status result=held->open_encoded_member(0,planned,reader,error);check(result!=EJODIN4_OK&&result!=EJODIN4_DRIVER_UNSUPPORTED&&!reader.get(),"corrupt header/block/footer/truncated/trailing frame cannot request fallback");}}
+}
+
+
+static void authenticated_archive_tests(){
+ Temp temp;std::string error;Cancellation none={0,0},cancel={stop,0};
+ for(unsigned mode=0;mode<5;++mode){Bytes tar;append(tar,"boot.img",bytes("abc"));append(tar,"layout.pit",pit());
+ if(mode==1){append(tar,"meta-data/one.mf",Bytes(300,0));append(tar,"meta-data/two.mf",Bytes(300,0));}
+ if(mode==2)append(tar,"meta-data/signed.mf",Bytes(256,0));
+ if(mode==3)append(tar,"meta-data/signed.mf",Bytes(300,0));
+ if(mode==4)append(tar,"meta-data/signed.mf.lz4",encoded_frame(std::vector<Bytes>(1,bytes("opaque metadata"))));
+ std::string p=temp.write(tar);EJODIN4_FirmwareFile file={EJODIN4_PACKAGE_AP,p.c_str(),uint32_t(p.size()+1)};std::unique_ptr<FirmwareSet> set;
+ check(prepare_firmware_set(&file,1,EJODIN4_UPDATE_SELECTED,1048576,none,set,error)==EJODIN4_OK,"prepare signed metadata negative archive");
+ FirmwareIdentity identity;EJODIN4_Status s=set->authenticate_identity(identity,none);check(s!=EJODIN4_OK&&!identity.present&&!identity.diagnostic.empty()&&identity.status==s,"missing ambiguous malformed or invalid signature metadata cannot authenticate archive");
+ if(mode==0)check(s==EJODIN4_DRIVER_UNSUPPORTED,"legacy unsigned package retains missing proof status");if(mode==1)check(s==EJODIN4_UNSUPPORTED_ARCHIVE,"multiple signed manifests reject ambiguity");if(mode==2)check(s==EJODIN4_INVALID_ARCHIVE,"signed manifest must exceed RSA signature prefix");if(mode==3)check(s==EJODIN4_CHECKSUM_MISMATCH,"invalid RSA signature cannot authenticate archive");
+ }
+ std::vector<Bytes> blocks(1,Bytes(1000,'a'));Bytes frame=encoded_frame(blocks);std::unique_ptr<FirmwareSet> set;check(prepare_encoded(temp,frame,set,error)==EJODIN4_OK,"prepare stored compressed member audit");std::unique_ptr<ImageReader> stored;check(set->archives[0]->open_stored_member(set->images[0].member_index,stored,error)==EJODIN4_OK,"open exact stored bytes independent of decode flag");uint8_t header[4]={0};uint32_t actual=0;check(stored->read(header,4,actual,none,error)==EJODIN4_OK&&actual==4&&header[0]==4&&header[1]==0x22&&header[2]==0x4d&&header[3]==0x18,"signed archive audit hashes compressed frame envelope rather than decoded image");check(stored->read(header,4,actual,cancel,error)==EJODIN4_CANCELLED&&actual==0,"stored identity reader cancellation exposes no bytes");
+}
+
+int main(int argc,char** argv){try{authenticated_archive_tests();encoded_reader_tests();sparse_tests();planner_tests();second_pass_tests();layout_tests(argc>1?argv[1]:0);generic_capacity_tests();userdata_capacity_identity_tests();std::cout<<"native streaming: "<<checks<<" checks passed"<<std::endl;return 0;}catch(const std::exception& error){std::cerr<<"native streaming failed after "<<checks<<" checks: "<<error.what()<<std::endl;return 1;}}

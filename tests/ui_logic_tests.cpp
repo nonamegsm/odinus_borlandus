@@ -31,7 +31,7 @@ int main(){
     plan.operation=EJODIN4_FLASH_READ_PIT;plan.flags=EJODIN4_FLASH_PER_PARTITION_PIT_UNITS;plan.image_count=0;plan.total_bytes=0;
     plan.transport=EJODIN4_DOWNLOAD_SAMSUNG_SERIAL;plan.protocol_version=3;plan.pit_entry_count=1;
     check(!OdinUi::completion(plan,EJODIN4_OK,EJODIN4_FLASH_READ_PIT,false,false,planState).valid,"read-PIT result cannot carry a write-only mixed-unit flag");
-    for(unsigned protocol=1;protocol<=2;++protocol){EJODIN4_FlashResult old=r;old.protocol_version=protocol;check(warning(old,s),"supported legacy protocol reboot disconnect warning accepted");}
+    for(unsigned protocol=1;protocol<=5;++protocol){EJODIN4_FlashResult old=r;old.protocol_version=protocol;check(warning(old,s),"supported stock protocol reboot disconnect warning accepted");}
     EJODIN4_FlashResult partial=r;partial.acknowledged_bytes--;OdinUi::ProgressState partialState=s;partialState.acknowledged=partial.acknowledged_bytes;
     check(!warning(partial,partialState),"partial ACK rejected by full-transfer proof even with consistent progress");
     EJODIN4_FlashResult empty=r;empty.image_count=empty.images_completed=0;check(!warning(empty,s),"empty image set never warning success");
@@ -56,7 +56,7 @@ int main(){
     bad=r;bad.acknowledged_bytes--;check(!warning(bad,s),"all bytes required");
     bad=r;bad.total_bytes=bad.acknowledged_bytes=0;check(!warning(bad,s),"nonzero transfer total required");
     bad=r;bad.transport=EJODIN4_DOWNLOAD_WINUSB;check(!warning(bad,s),"warning narrowly limited to stock serial driver");
-    bad=r;bad.protocol_version=4;check(!warning(bad,s),"warning only supported protocol 1 through 3");
+    bad=r;bad.protocol_version=6;check(!warning(bad,s),"warning only supported protocol 1 through 5");
     bad=r;bad.last_proven_phase=EJODIN4_PHASE_FINALIZING;check(!warning(bad,s),"finalize failure is not reboot failure");
     bad=r;bad.last_response_id=0x66;check(!warning(bad,s),"requires proven accepted finalization response");
     bad=r;bad.last_ack=1;check(!warning(bad,s),"device NACK never warning success");
@@ -76,6 +76,17 @@ int main(){
     s=OdinUi::ProgressState();s.roleMask=1u<<2;p=image();p.acknowledged_bytes=50;check(s.observe(&p),"initial ACK accepted");p.acknowledged_bytes=49;check(!s.observe(&p),"regressing ACK rejected");
     s=OdinUi::ProgressState();s.operation=EJODIN4_FLASH_PLAN_ONLY;s.roleMask=1u<<2;p=image();check(!s.observe(&p),"offline plan cannot emit write callback");
     s=OdinUi::ProgressState();s.packageCount=1;s.roleMask=1u<<2;p=image();p.phase=EJODIN4_PHASE_VERIFY_IMAGE;p.image_count=1;p.image_index=0;p.total_bytes=p.image_bytes=0;p.source_offset=50;p.stored_bytes=100;check(s.observe(&p),"valid verification accepted");p.source_offset=49;check(!s.observe(&p),"verification counter regression rejected");
+    s=OdinUi::ProgressState();s.packageCount=1;s.roleMask=1u<<2;p=image();p.phase=EJODIN4_PHASE_VERIFY_IMAGE;p.image_count=1;p.image_index=0;
+    p.total_bytes=p.image_bytes=0;p.source_offset=p.stored_bytes=100;check(s.observe(&p),"first verification pass completes");
+    EJODIN4_FlashProgress preflight;std::memset(&preflight,0,sizeof(preflight));preflight.struct_size=sizeof(preflight);preflight.phase=EJODIN4_PHASE_PREFLIGHT;
+    check(s.observe(&preflight),"fresh preflight starts another verification pass");
+    check(!s.verifyPhase&&!s.verifyIndex&&s.verifyName.empty()&&!s.verifyCompleted&&!s.verifyTotal,"preflight resets only verification cursor");
+    p.source_offset=0;check(s.observe(&p),"same verification name can restart from zero after preflight");
+    p.source_offset=50;check(s.observe(&p),"new pass advances independently");p.source_offset=49;check(!s.observe(&p),"regression inside second pass still rejected");
+    s=context();s.verifyPhase=EJODIN4_PHASE_VERIFY_IMAGE;s.verifyIndex=1;s.verifyName="same.img";s.verifyCompleted=s.verifyTotal=100;s.loggedImages[19]=true;
+    preflight.acknowledged_bytes=preflight.total_bytes=s.acknowledged;check(s.observe(&preflight),"preflight with consistent ACK counter accepted");
+    check(s.acknowledged==11882352976ULL&&s.terminalPhases==0&&s.rebootPending&&s.loggedImages[19],"preflight preserves ACK and safety state");
+    s.terminalPhases=2;check(s.observe(&preflight)&&s.terminalPhases==2,"preflight does not clear cancellation proof");
     check(OdinUi::supported(1)&&OdinUi::supported(2)&&!OdinUi::supported(0)&&!OdinUi::supported(3)&&!OdinUi::supported(256),"device choices support only exact known transport flags");
     check(OdinUi::tone(L"Writing [19/26] super_error.img (AP)")==OdinUi::Image,"filename error token is not severity");
     check(OdinUi::tone(L"Warning: reboot error unconfirmed")==OdinUi::Warning,"warning with error word stays amber");

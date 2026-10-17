@@ -2,9 +2,9 @@
 
 Run OdinBCC.exe on Windows. The GUI, Odin raw protocol engine and pinned LZ4 sources are compiled directly with classic BCC32 6.90 into one native x86 executable. No private Odin DLL or compiler RTL package is required. Keep LICENSE and NOTICE with the executable. Standard Windows libraries, including the system RichEdit control, and the selected phone driver are still required.
 
-This build synchronizes the 2026-10-17 stock-driver framing, raw protocol 1–3 guards, slot selection, supported-device filtering, concise coloured logging and finalized-flash/reboot-warning fixes from EasyJTAG. Versions 4/5 remain unsupported until their DEVINFO flow is implemented. No phone operation starts automatically.
+This build synchronizes the 2026-10-17 stock-driver framing, raw protocol 1–3 guards, slot selection, supported-device filtering, concise coloured logging and finalized-flash/reboot-warning fixes from EasyJTAG. Native stock protocols 1–5 now select the appropriate raw/encoded flow; protocols 4/5 require manufacturer-authenticated package metadata and DEVINFO policy. WinUSB remains at reviewed protocols 1–3. No phone operation starts automatically.
 
-PIT capacity validation is firmware-independent: eMMC type 2 uses 512-byte units and UFS type 8 uses 4096-byte units per partition. Expanded images must fit the matched live layout; zero-count USERDATA requires independently supplied capacity. ABI 1.10 supports mixed units without a model/build/hash allowlist.
+PIT capacity validation is firmware-independent: eMMC type 2 uses 512-byte units and UFS type 8 uses 4096-byte units per partition. Expanded images must fit the matched live layout; zero-count USERDATA requires independently supplied capacity. ABI 1.11 supports mixed units without a model/build/hash allowlist.
 
 Native Debug/Release tests and owned-window offline firmware-plan checks pass. This native Borland build has not been physically flashed; the user-reported successful EasyJTAG flash is separate evidence.
 

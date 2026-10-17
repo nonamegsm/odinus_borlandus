@@ -149,6 +149,21 @@ struct Events {
         emit(result.phase);
     }
 };
+struct EncodedAuditProgress {
+    Events& events; const PlanImage& image; uint32_t archive_count;
+    EncodedAuditProgress(Events& e,const PlanImage& i,uint32_t count):events(e),image(i),archive_count(count){}
+    static void report(void* context,uint64_t done,uint64_t total){
+        EncodedAuditProgress& audit=*static_cast<EncodedAuditProgress*>(context);VerificationProgress work;
+        work.phase=EJODIN4_PHASE_VERIFY_IMAGE;work.role=audit.image.role;work.archive_index=uint32_t(audit.image.archive_index);work.archive_count=audit.archive_count;
+        work.name=verification_member_name("Checking transfer data",audit.image.member_index,audit.image.name);work.completed_bytes=done;work.total_bytes=total;audit.events.verification(work);
+    }
+};
+struct EncodedReaders {
+    std::vector<EncodedImageReader*> readers;
+    ~EncodedReaders(){for(size_t i=0;i<readers.size();++i)delete readers[i];}
+private: EncodedReaders(const EncodedReaders&);EncodedReaders& operator=(const EncodedReaders&);
+public: EncodedReaders(){}
+};
 EJODIN4_Status perform(const EJODIN4_FlashRequest& request, EJODIN4_FlashResult& output,
                        Events& events, const Cancellation& cancel, std::string& error, Platform* injected) {
     if (cancel.requested()) { error = "Flash operation cancelled before preflight"; return EJODIN4_CANCELLED; }
@@ -174,6 +189,25 @@ EJODIN4_Status perform(const EJODIN4_FlashRequest& request, EJODIN4_FlashResult&
     if (request.operation == EJODIN4_FLASH_PLAN_ONLY) {
         return firmware->verify_unchanged(error);
     }
+    events.phase(EJODIN4_PHASE_PREFLIGHT);
+    FirmwareIdentity identity;
+    if(request.operation==EJODIN4_FLASH_WRITE){
+        const EJODIN4_Status authenticated=firmware->authenticate_identity(identity,cancel,VerificationCallback(Events::verified,&events));
+        if(authenticated==EJODIN4_CANCELLED)return authenticated;
+        // Legacy versions do not require signed DEVINFO. Retain missing/failed
+        // proof in context so newer native versions cannot authorize writes.
+    }
+    EncodedReaders encoded;
+    if(request.operation==EJODIN4_FLASH_WRITE){
+        encoded.readers.resize(firmware->images.size(),static_cast<EncodedImageReader*>(0));
+        for(size_t i=0;i<firmware->images.size();++i){
+            const PlanImage& image=firmware->images[i];EncodedAuditProgress audit(events,image,request.file_count);std::unique_ptr<EncodedImageReader> reader;
+            status=firmware->open_encoded_image(i,reader,error,cancel,ArchiveScanCallback(EncodedAuditProgress::report,&audit));
+            if(status==EJODIN4_DRIVER_UNSUPPORTED){error.clear();status=EJODIN4_OK;}
+            if(status!=EJODIN4_OK)return status;
+            encoded.readers[i]=reader.release();
+        }
+    }
     if (cancel.requested()) { error = "Flash operation cancelled before connecting"; return EJODIN4_CANCELLED; }
     events.phase(EJODIN4_PHASE_CONNECTING);
     std::unique_ptr<Platform> native;
@@ -186,7 +220,8 @@ EJODIN4_Status perform(const EJODIN4_FlashRequest& request, EJODIN4_FlashResult&
     if (status != EJODIN4_OK) return status;
     Session session(channel,SessionProgress(Events::session_changed,&events),request.io_timeout_ms);
     std::vector<EJODIN4_PitEntry> pit;
-    status = session.begin(pit, error, request.operation == EJODIN4_FLASH_WRITE ? firmware->total_bytes : 0);
+    status = session.begin(pit, error, request.operation == EJODIN4_FLASH_WRITE ? firmware->total_bytes : 0,
+        request.operation == EJODIN4_FLASH_WRITE ? &identity : 0);
     if (status == EJODIN4_OK) {
         output.pit_entry_count = static_cast<uint32_t>(pit.size());
         for (size_t k=0;k<pit.size();++k) events.emit(EJODIN4_PHASE_PIT_ENTRY,&pit[k]);
@@ -223,7 +258,7 @@ EJODIN4_Status perform(const EJODIN4_FlashRequest& request, EJODIN4_FlashResult&
             events.image = &firmware->images[i]; events.index = static_cast<uint32_t>(i);
             std::unique_ptr<ImageReader> reader;
             status = firmware->open_image(i, reader, error);
-            if (status == EJODIN4_OK) status = session.send_image(firmware->images[i], *reader, error);
+            if (status == EJODIN4_OK) status = session.send_image(firmware->images[i], *reader, error, session.compression_supported()?encoded.readers[i]:0);
         }
         events.image = 0; events.index = 0;
         if (status == EJODIN4_OK) status = firmware->verify_unchanged(error);

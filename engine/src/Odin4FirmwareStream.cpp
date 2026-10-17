@@ -1,4 +1,5 @@
 #include "Odin4FirmwareStream.h"
+#include "Odin4FirmwareIdentity.h"
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -180,6 +181,14 @@ FirmwareSet::~FirmwareSet(){for(size_t i=0;i<archives.size();++i)delete archives
 EJODIN4_Status FirmwareSet::verify_unchanged(std::string& error)const{
     for(size_t i=0;i<archives.size();++i){const EJODIN4_Status status=archives[i]->verify_unchanged(error);if(status!=EJODIN4_OK)return status;}return EJODIN4_OK;
 }
+EJODIN4_Status FirmwareSet::open_encoded_image(size_t index,std::unique_ptr<EncodedImageReader>& reader,
+    std::string& error,const Cancellation& cancel,const ArchiveScanCallback& progress){
+    reader.reset();if(cancel.requested())return bad(error,"Encoded image audit cancelled",EJODIN4_CANCELLED);
+    if(index>=images.size())return bad(error,"Invalid planned encoded image index",EJODIN4_INVALID_ARGUMENT);
+    const PlanImage& image=images[index];if(image.archive_index>=archives.size())return bad(error,"Invalid planned encoded archive",EJODIN4_INTERNAL_ERROR);
+    const EJODIN4_Status status=verify_unchanged(error);if(status!=EJODIN4_OK)return status;
+    return archives[image.archive_index]->open_encoded_member(image.member_index,image,reader,error,cancel,progress);
+}
 EJODIN4_Status FirmwareSet::open_image(size_t index,std::unique_ptr<ImageReader>& reader,std::string& error){
     if(index>=images.size())return bad(error,"Invalid planned image index",EJODIN4_INVALID_ARGUMENT);
     const PlanImage& image=images[index];if(image.archive_index>=archives.size())return bad(error,"Invalid planned archive",EJODIN4_INTERNAL_ERROR);
@@ -188,6 +197,53 @@ EJODIN4_Status FirmwareSet::open_image(size_t index,std::unique_ptr<ImageReader>
     std::unique_ptr<VerifiedImageReader> verified(new VerifiedImageReader(member.release(),image));
     if(!verified->ready())return bad(error,"Cannot initialize image second-pass SHA256",EJODIN4_INTERNAL_ERROR);
     reader.reset(verified.release());return EJODIN4_OK;
+}
+static EJODIN4_Status identity_failure(FirmwareIdentity& output,EJODIN4_Status status,const std::string& reason){output.status=status;output.diagnostic=reason;return status;}
+EJODIN4_Status FirmwareSet::authenticate_identity(FirmwareIdentity& output,const Cancellation& cancel,const VerificationCallback& progress){
+    output=FirmwareIdentity();std::string error;FirmwareIdentity identity;
+    std::set<size_t> selected;
+    for(size_t n=0;n<images.size();++n)selected.insert(images[n].archive_index);
+    if(selected.empty())return identity_failure(output,EJODIN4_INVALID_ARGUMENT,"No selected firmware archives for DEVINFO identity");
+    std::map<size_t,size_t> manifests;
+    for(std::set<size_t>::const_iterator selected_it=selected.begin();selected_it!=selected.end();++selected_it){const size_t index=*selected_it;
+        if(index>=archives.size())return identity_failure(output,EJODIN4_INTERNAL_ERROR,"Selected firmware archive index is invalid");
+        const std::vector<EJODIN4_ArchiveEntry>& entries=archives[index]->entries;size_t found=entries.size();
+        for(size_t member=0;member<entries.size();++member){const std::string name=field(entries[member].name,256);
+            if(name.compare(0,10,"meta-data/")==0&&name.size()>=14&&name.compare(name.size()-3,3,".mf")==0){
+                if(found!=entries.size())return identity_failure(output,EJODIN4_UNSUPPORTED_ARCHIVE,"Ambiguous signed firmware manifests");found=member;
+            }
+        }
+        if(found==entries.size())return identity_failure(output,EJODIN4_DRIVER_UNSUPPORTED,"Selected firmware lacks signed meta-data/*.mf identity required for native protocol 4/5");
+        manifests[index]=found;
+    }
+    bcc::Array<uint8_t,65536> bytes;
+    for(std::set<size_t>::const_iterator selected_it=selected.begin();selected_it!=selected.end();++selected_it){const size_t index=*selected_it;
+        if(cancel.requested())return identity_failure(output,EJODIN4_CANCELLED,"Firmware identity authentication cancelled");
+        HeldArchive& archive=*archives[index];const size_t member=manifests[index];const EJODIN4_ArchiveEntry& entry=archive.entries[member];
+        if(entry.data_bytes<=256||entry.data_bytes>=131072||(entry.flags&EJODIN4_ARCHIVE_ENTRY_LZ4))return identity_failure(output,EJODIN4_INVALID_ARCHIVE,"Signed firmware manifest has invalid storage or size");
+        std::unique_ptr<ImageReader> reader;EJODIN4_Status status=archive.open_stored_member(member,reader,error);if(status!=EJODIN4_OK)return identity_failure(output,status,error);
+        std::vector<uint8_t> signed_bytes;uint64_t consumed=0;
+        for(;;){uint32_t actual=0;status=reader->read(bytes.data(),uint32_t(bytes.size()),actual,cancel,error);if(status!=EJODIN4_OK)return identity_failure(output,status,error);if(!actual)break;if(actual>entry.data_bytes-consumed)return identity_failure(output,EJODIN4_INVALID_ARCHIVE,"Signed manifest extent changed");signed_bytes.insert(signed_bytes.end(),bytes.begin(),bytes.begin()+actual);consumed+=actual;}
+        if(consumed!=entry.data_bytes)return identity_failure(output,EJODIN4_INVALID_ARCHIVE,"Signed manifest is truncated");
+        SignedFirmwareManifest manifest;status=verify_signed_manifest(signed_bytes,manifest,error);if(status!=EJODIN4_OK)return identity_failure(output,status,error);
+        if(identity.present&&identity.model!=manifest.model)return identity_failure(output,EJODIN4_PIT_MAPPING_ERROR,"Selected authenticated firmware archives have different models");
+        identity.model=manifest.model;identity.present=true;
+        if(!manifest.blocked_carriers.empty()&&identity.blocked_carriers.find(manifest.blocked_carriers)==std::string::npos)identity.blocked_carriers+=manifest.blocked_carriers;
+        if(identity.blocked_carriers.size()>4096)return identity_failure(output,EJODIN4_INVALID_ARCHIVE,"Merged authenticated carrier policy exceeds its bound");
+        for(size_t item=0;item<archive.entries.size();++item){
+            const EJODIN4_ArchiveEntry& source=archive.entries[item];const std::string name=field(source.name,256);if(name.compare(0,10,"meta-data/")==0)continue;
+            const std::map<std::string,std::string>::const_iterator expected=manifest.member_sha256.find(name);if(expected==manifest.member_sha256.end())return identity_failure(output,EJODIN4_CHECKSUM_MISMATCH,"Signed manifest does not authenticate an archive member: "+name);
+            status=archive.open_stored_member(item,reader,error);if(status!=EJODIN4_OK)return identity_failure(output,status,error);Hash hash;if(!hash.start())return identity_failure(output,EJODIN4_INTERNAL_ERROR,"Cannot initialize signed member SHA-256");consumed=0;
+            VerificationProgress work;work.phase=EJODIN4_PHASE_VERIFY_IMAGE;work.archive_index=uint32_t(index);work.archive_count=uint32_t(archives.size());work.name=verification_member_name("Checking signed file",item,name);work.total_bytes=source.data_bytes;
+            for(size_t image_n=0;image_n<images.size();++image_n)if(images[image_n].archive_index==index){work.role=images[image_n].role;break;}
+            VerificationReporter reporter(progress);reporter.report(work,true);
+            for(;;){uint32_t actual=0;status=reader->read(bytes.data(),uint32_t(bytes.size()),actual,cancel,error);if(status!=EJODIN4_OK)return identity_failure(output,status,error);if(!actual)break;if(actual>source.data_bytes-consumed||!hash.add(bytes.data(),actual))return identity_failure(output,EJODIN4_CHECKSUM_MISMATCH,"Signed member extent or hashing failed");consumed+=actual;work.completed_bytes=consumed;reporter.report(work,consumed==source.data_bytes);}
+            PlanImage observed;if(consumed!=source.data_bytes||!hash.finish(observed))return identity_failure(output,EJODIN4_CHECKSUM_MISMATCH,"Signed member length or SHA-256 completion failed");
+            if(observed.sha256!=expected->second)return identity_failure(output,EJODIN4_CHECKSUM_MISMATCH,"Stored archive member differs from authenticated SHA-256: "+name);
+        }
+    }
+    EJODIN4_Status status=verify_unchanged(error);if(status!=EJODIN4_OK)return identity_failure(output,status,error);
+    identity.status=EJODIN4_OK;output=identity;return EJODIN4_OK;
 }
 EJODIN4_Status FirmwareSet::validate_device_pit(const std::vector<EJODIN4_PitEntry>& pit,uint32_t sector,std::string& error,uint64_t verified_userdata_capacity_bytes){
     if(pit.empty()||pit.size()>512)return bad(error,"Device PIT is empty or exceeds the supported entry count");

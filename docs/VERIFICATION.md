@@ -4,23 +4,25 @@ Current firmware-independent PIT behavior is recorded in [PIT routing](PIT_ROUTI
 
 ## Build and deployment
 
-Both Win32 configurations compile with classic BCC32 6.90 from Studio 15.0. Debug was built through the actual C++Builder/MSBuild project; Release was built through the Python driver. Each links fifteen Borland OMF objects: UI, ten engine modules and four unchanged LZ4/xxHash sources. No MSVC/MinGW compiler or private engine DLL is used.
+Both Win32 configurations compile with classic BCC32 6.90 from Studio 15.0. Debug was built through the actual C++Builder/MSBuild project; Release was built through the Python driver. Each links sixteen Borland OMF objects: UI, eleven engine modules and four unchanged LZ4/xxHash sources. No MSVC/MinGW compiler or private engine DLL is used.
 
 The build checks the pinned vendor source hashes and redistribution notice. Build manifests record source, header, object and executable hashes. Both executables import only ADVAPI32, COMCTL32, COMDLG32, GDI32, KERNEL32, OLE32, SETUPAPI and USER32. WinUSB is loaded from the Windows system directory only when selected. The portable EXE starts successfully when copied alone to a private folder, without any private DLL or Borland RTL package.
 
 ## Native tests
 
-All six suites pass against the rebuilt generic PIT-unit implementation in both Debug and Release, linked directly to the actual engine objects:
+All eight suites pass against the rebuilt negotiated-protocol implementation in both Debug and Release, linked directly to the actual engine objects:
 
 | Suite | Checks per configuration |
 | --- | ---: |
 | Wire/PIT/trailer core | 832 |
 | TAR/MD5/LZ4/archive validation | 173 |
-| Streaming, hashes, sparse geometry and generic PIT units | 164 |
-| Protocol session and integrated flash-operation composition | 1667221 |
+| Streaming, hashes, sparse geometry and generic PIT units | 845 |
+| Protocol session and integrated flash-operation composition | 11405308 |
 | Fake USB and pending-I/O transport | 299 |
-| C++03 UI progress/result/severity decisions | 66 |
-| Total | 1668755 |
+| C++03 UI progress/result/severity decisions | 78 |
+| Manufacturer signature/parser | 112 |
+| DEVINFO identity/policy | 21 |
+| Total | 11407668 |
 
 Coverage includes exact request goldens, malformed and full-width PIT entries, archive corruption, source checksums, Unicode paths, held-file protection, decoded limits, 8 GiB sparse geometry, ordered repeated writes, protected partitions, second-pass digest checks, callbacks, partial transfers, >4 GiB counters, ACK errors, timeout defaults/overrides, cancellation and checked finalization. Integrated PIT-read tests cover native cleanup failures and throwing callbacks without image writes. SDK structure-size/offset probes also pass with BCC.
 
@@ -63,4 +65,10 @@ Build/test runners validate the actual manifest-selected executable and source/h
 
 ## Firmware-independent capacity validation
 
-ABI 1.10 keeps request/progress/result records at 64/537/68 bytes. Mixed-storage WRITE results use EJODIN4_FLASH_PER_PARTITION_PIT_UNITS (32) with logical_sector_bytes=0; each image is still checked using its own known allocation unit. Homogeneous results expose a common unit. No request flag bypasses capacity validation. These are PIT storage-type conventions, not live READ CAPACITY measurements. Existing checksums and second-pass digests bind transferred bytes to the selected input and are not model eligibility gates. Tests also reject assigning one supplied USERDATA capacity to distinct partition aliases while accepting repeated transfers to the same destination. The build records identify the actual rebuilt executable and test output.
+ABI 1.11 keeps request/progress/result records at 64/537/68 bytes. Mixed-storage WRITE results use EJODIN4_FLASH_PER_PARTITION_PIT_UNITS (32) with logical_sector_bytes=0; each image is still checked using its own known allocation unit. Homogeneous results expose a common unit. No request flag bypasses capacity validation. These are PIT storage-type conventions, not live READ CAPACITY measurements. Existing checksums and second-pass digests bind transferred bytes to the selected input and are not model eligibility gates. Tests also reject assigning one supplied USERDATA capacity to distinct partition aliases while accepting repeated transfers to the same destination. The build records identify the actual rebuilt executable and test output.
+
+## Negotiated native protocols
+
+The native stock-driver engine supports reviewed protocols 1–5, including capability-selected LZ4 block-record sequences and authenticated DEVINFO model/carrier policy for newer writes. Raw 1–3 and the reviewed WinUSB 1–3 path retain their established transcripts. Eight native suites pass in Debug and Release, plus seven manifest regressions and seven/thirteen owned-window offline cases. The actual C++Builder Base-to-Debug build also passes with sixteen objects.
+
+No genuine manufacturer-signed positive manifest fixture or physical protocol-4/5 run was available. Independent generated-key CryptoAPI vectors test the cryptographic primitive and production rejection of the test key; they do not substitute for that missing positive manufacturer/device evidence. See [native protocol compatibility](NATIVE_PROTOCOL_COMPATIBILITY.md) for source Evidence and exact limits.

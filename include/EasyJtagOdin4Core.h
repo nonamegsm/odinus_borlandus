@@ -1,4 +1,4 @@
-/* Native classic BCC Odin engine. Packed records retained for checked interfaces. */
+/* Native classic BCC Odin engine ABI 1.11. Packed records retained for checked interfaces. */
 #ifndef EASYJTAG_ODIN4_CORE_H
 #define EASYJTAG_ODIN4_CORE_H
 
@@ -411,6 +411,11 @@ typedef void (EJODIN4_CALL *EJODIN4_FlashProgressCallback)(
  * download list and omits USERDATA/MISC/OMR by member and PIT destination aliases.
  * Entire selected firmware is validated before any transfer; package PIT never
  * uploads. WRITE compares current device PIT and rejects unsupported routes.
+ * Samsung stock-driver sessions support negotiated versions 1 through 5;
+ * versions 4/5 require validated DEVINFO and manufacturer-signed authenticate.mf
+ * with matching stored-member digests and common model/carrier before WRITE.
+ * WinUSB image transfers retain reviewed versions 1 through 3 only. Unknown
+ * versions and unsupported storage routes fail before image commands.
  * Invalid request leaves result unchanged. A valid operation publishes partial
  * result even on failure: ANY_WRITE means a partition may have changed.
  * A successful WRITE requires every image ACK, session finalization and native

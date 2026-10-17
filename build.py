@@ -135,6 +135,9 @@ def main():
     common += ["-v","-y","-Od","-D_DEBUG"] if args.configuration=="Debug" else ["-O2","-v-","-DNDEBUG"]
     env=os.environ.copy()
     env["PATH"]=str(bds/"bin")+os.pathsep+env.get("PATH","")
+    # Includes the native firmware identity verifier in both IDE and CLI builds.
+    if not (ROOT/"engine/src/Odin4FirmwareIdentity.cpp").is_file():
+        raise RuntimeError("Missing native firmware identity verifier")
     engine_sources=sorted((ROOT/"engine/src").glob("*.cpp"))
     if not engine_sources:raise RuntimeError("No engine sources found")
     sources=[ROOT/"src/Main.cpp"]+engine_sources+[ROOT/"engine/vendor/lz4"/(name+".c") for name in ("lz4","lz4hc","lz4frame","xxhash")]

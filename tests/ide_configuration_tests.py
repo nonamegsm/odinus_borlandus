@@ -42,7 +42,8 @@ def main():
         manifest = json.loads((root/'bin'/expected/'build-manifest.json').read_text())
         assert manifest['configuration'] == expected and manifest['native_engine']
         assert manifest['private_runtime_dll_required'] is False
-        assert len(manifest['objects']) == 15
+        assert len(manifest['objects']) == 16
+        assert any(Path(item['file']).name == 'Odin4FirmwareIdentity.obj' for item in manifest['objects']), 'Signed identity object is missing from IDE output'
         assert 'Native BCC configuration: '+expected+' (IDE selection: '+selection+')' in ran.stdout
     (artifacts/'results.json').write_text(json.dumps(results, indent=2)+'\n', encoding='utf-8')
     return 0 if all(item['exit_code'] == 0 for item in results) else 1

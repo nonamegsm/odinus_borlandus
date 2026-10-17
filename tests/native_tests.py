@@ -3,7 +3,7 @@
 import argparse,json,os,subprocess,sys,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parent.parent
-TARGETS=('native_static_probe','native_archive_tests','native_streaming_tests','native_session_tests','native_transport_tests','ui_logic_tests')
+TARGETS=('native_static_probe','native_archive_tests','native_streaming_tests','native_session_tests','native_transport_tests','native_firmware_identity_tests','native_device_info_tests','ui_logic_tests')
 def quoted(path):
     return '"'+str(path)+'"'
 def main():

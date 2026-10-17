@@ -1,5 +1,6 @@
 #include "Odin4Session.h"
 #include "Odin4FlashOperation.h"
+#include "lz4frame.h"
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -18,6 +19,9 @@ struct Device {
     uint32_t commands,images,sequences,finishes,closes,zero_calls;
     uint32_t wrong_command,fail_command,wrong_index;
     bool fail_reset,stock;
+    bool encoded_packets,cancel_encoded_packet,negative_data_ack;
+    uint32_t encoded_bytes,encoded_written,fail_sub;
+    std::vector<uint32_t> encoded_completions;
     uint32_t data_ack_bytes;std::vector<uint32_t> data_packet_sizes;
     uint32_t handshake_write_fail_after,handshake_read_fail_after,handshake_read_bytes;
     EJODIN4_Status handshake_failure;
@@ -32,15 +36,19 @@ struct Device {
     uint64_t data_ack_ready_at,data_ack_budget_ms,data_write_budget_ms;
     bool awaiting_data_ack;
     std::vector<uint64_t> control_budgets;
-    std::vector<uint8_t> pit,write_buffer;
+    std::vector<uint8_t> pit,write_buffer,devinfo;
+    uint32_t devinfo_size_override;bool devinfo_short;
     std::deque<uint8_t> incoming;
     std::vector<std::vector<uint32_t> > transcript;
-    Device() : clock(0),total(0),image_bytes(0),data_written(0),protocol(2),packet(1048576),expected(4),packet_index(0),packets(0),commands(0),images(0),sequences(0),finishes(0),closes(0),zero_calls(0),wrong_command(0),fail_command(0),wrong_index(UINT32_MAX),fail_reset(false),optional_mode(0),read_zeroes(0),zero_advance(0),metadata_tail_bytes(0),change_metadata_framing(false),cancelled(false),fragment(true),fail_close(false),fail_write(false),handshake_bad(false),begin_capability(true),zero_cancel(false),pit_short(false),completion_fail(false),pit_size_override(0),data_ack_delay_ms(0),data_ack_ready_at(0),data_ack_budget_ms(0),data_write_budget_ms(0),awaiting_data_ack(false),stock(true),data_ack_bytes(8),handshake_write_fail_after(UINT32_MAX),handshake_read_fail_after(UINT32_MAX),handshake_read_bytes(0),handshake_failure(EJODIN4_TIMEOUT),pit(28+132,0) {
+    Device() : devinfo_size_override(0),devinfo_short(false),encoded_packets(false),cancel_encoded_packet(false),negative_data_ack(false),encoded_bytes(0),encoded_written(0),fail_sub(UINT32_MAX),clock(0),total(0),image_bytes(0),data_written(0),protocol(2),packet(1048576),expected(4),packet_index(0),packets(0),commands(0),images(0),sequences(0),finishes(0),closes(0),zero_calls(0),wrong_command(0),fail_command(0),wrong_index(UINT32_MAX),fail_reset(false),optional_mode(0),read_zeroes(0),zero_advance(0),metadata_tail_bytes(0),change_metadata_framing(false),cancelled(false),fragment(true),fail_close(false),fail_write(false),handshake_bad(false),begin_capability(true),zero_cancel(false),pit_short(false),completion_fail(false),pit_size_override(0),data_ack_delay_ms(0),data_ack_ready_at(0),data_ack_budget_ms(0),data_write_budget_ms(0),awaiting_data_ack(false),stock(true),data_ack_bytes(8),handshake_write_fail_after(UINT32_MAX),handshake_read_fail_after(UINT32_MAX),handshake_read_bytes(0),handshake_failure(EJODIN4_TIMEOUT),pit(28+132,0) {
         put((&pit[0]),0x12349876);put((&pit[0])+4,1);
         put((&pit[0])+28+8,1); // identifier
         put((&pit[0])+28+24,0x100000);
         std::memcpy((&pit[0])+28+36,"BOOT",4);
         std::memcpy((&pit[0])+28+68,"boot.img",8);
+        devinfo.assign(500,0);put(&devinfo[0],0x12345678);put(&devinfo[0]+4,2);
+        put(&devinfo[0]+8,0);put(&devinfo[0]+12,48);std::memcpy(&devinfo[0]+56,"SM-TEST",7);
+        put(&devinfo[0]+20,3);put(&devinfo[0]+24,80);std::memcpy(&devinfo[0]+88,"PLS",3);
     }
     void queue(const uint8_t* p,size_t n) { incoming.insert(incoming.end(),p,p+n); }
     void ack(uint32_t id,uint32_t value=0) {
@@ -53,13 +61,18 @@ struct Device {
             expected=1024;
         } else if(packets) {
             data_packet_sizes.push_back(uint32_t(write_buffer.size()));
-            check(write_buffer.front()==0x5a,"literal image byte");
-            const uint64_t remaining=image_bytes-data_written;
-            const uint32_t genuine=uint32_t(std::min<uint64_t>(remaining,packet));
-            if(genuine<packet) check(write_buffer[genuine]==0 && write_buffer.back()==0,"last packet zero padding");
-            data_written+=genuine;
-            ack(0,wrong_index==packet_index?packet_index+1:packet_index);
+            if(encoded_packets){
+                uint32_t genuine=std::min(encoded_bytes-encoded_written,packet);
+                for(uint32_t i=0;i<genuine;++i)check(write_buffer[i]==0x6b,"encoded original record byte");
+                for(size_t i=genuine;i<write_buffer.size();++i)check(write_buffer[i]==0,"encoded zero packet padding");encoded_written+=genuine;
+            }else{
+                check(write_buffer.front()==0x5a,"literal image byte");
+                const uint64_t remaining=image_bytes-data_written;const uint32_t genuine=uint32_t(std::min<uint64_t>(remaining,packet));
+                if(genuine<packet)check(write_buffer[genuine]==0&&write_buffer.back()==0,"last packet zero padding");data_written+=genuine;
+            }
+            ack(0,negative_data_ack?UINT32_MAX:wrong_index==packet_index?packet_index+1:packet_index);
             for(uint32_t i=data_ack_bytes;i<8;++i)incoming.pop_back();
+            if(encoded_packets&&cancel_encoded_packet)cancelled=true;
             awaiting_data_ack=true;data_ack_ready_at=clock+data_ack_delay_ms;
             ++packet_index;--packets;expected=packets?packet:1024;
         } else {
@@ -72,7 +85,9 @@ struct Device {
             if(cmd==0x64 && sub==0) check(request[2]==(stock?5u:0x7fffffffu),"transport-specific maximum protocol negotiation payload");
             if(cmd==0x64 && sub==5) check(request[2]==1048576,"modern packet size negotiation");
             if(cmd==0x66 && sub==2) check(request[2]>0 && request[2]<=30u*1024u*1024u && request[2]%(stock?131072u:packet)==0,"bounded aligned sequence size");
-            if(cmd==0x65 && sub==2) {
+            if(cmd==0x69 && sub==1){
+                uint32_t offset=request[2]*500;check(offset+500<=devinfo.size(),"bounded DEVINFO block index");queue(&devinfo[0]+offset,devinfo_short?499:500);
+            } else if(cmd==0x65 && sub==2) {
                 const uint32_t offset=get((&write_buffer[0])+8)*500;
                 check(offset<pit.size(),"PIT block index");
                 const size_t n=std::min<size_t>(500,pit.size()-offset);
@@ -86,14 +101,17 @@ struct Device {
             } else {
                 uint32_t value=0;
                 if(cmd==0x64 && sub==0) value=(protocol<<16)|(begin_capability?(stock?0x8000u:0x80000000u):0);
+                if(cmd==0x69 && sub==0)value=devinfo_size_override?devinfo_size_override:uint32_t(devinfo.size());
                 if(cmd==0x65 && sub==1) value=pit_size_override?pit_size_override:uint32_t(pit.size());
                 if(cmd==0x64 && sub==2) total=stock?uint64_t(get((&write_buffer[0])+8))+uint64_t(get((&write_buffer[0])+12))*UINT64_C(0xffffffff):uint64_t(get((&write_buffer[0])+8))|(uint64_t(get((&write_buffer[0])+12))<<32);
-                if(cmd==0x66 && sub==0) ++images;
+                if(cmd==0x66 && (sub==0||sub==5)){++images;encoded_packets=sub==5;}
+                if(cmd==0x66 && sub==6){++sequences;encoded_bytes=request[2];encoded_written=0;packets=(encoded_bytes+packet-1)/packet;packet_index=0;expected=packet;}
+                if(cmd==0x66 && sub==7)encoded_completions.push_back(request[3]);
                 if(cmd==0x66 && sub==2) { ++sequences;packets=(get((&write_buffer[0])+8)+packet-1)/packet;packet_index=0;expected=packet; }
-                if(cmd==0x66 && sub==3 && completion_fail) value=0xfffffffeu;
+                if(cmd==0x66 && (sub==3||sub==7) && completion_fail) value=0xfffffffeu;
                 if(cmd==0x64 && sub==1 && fail_reset) value=0xfffffffeu;
                 if(cmd==0x67 && sub==0) ++finishes;
-                if(cmd==fail_command) value=0xfffffffeu;
+                if(cmd==fail_command && (fail_sub==UINT32_MAX||fail_sub==sub)) value=0xfffffffeu;
                 ack(cmd==wrong_command?cmd+1:cmd,value);
                 if(cmd==0x64 && sub==1) {
                     uint8_t tail[4]={0x78,0x56,0x34,0x12};
@@ -190,6 +208,28 @@ public:
     }
 };
 Cancellation make_cancel(Device* d){Cancellation c={cancellation,d};return c;}
+class EncodedReader : public EncodedImageReader {
+public:
+    uint64_t remaining;
+    uint32_t calls,fail_call,stored;
+    bool short_decoded,empty_records,oversized,extra;
+    Device* cancel_device;
+    std::vector<uint32_t> record_sizes;
+    explicit EncodedReader(uint64_t bytes):remaining(bytes),calls(0),fail_call(0),stored(73),short_decoded(false),empty_records(false),oversized(false),extra(false),cancel_device(0){}
+    EJODIN4_Status read_sequence(uint32_t limit,std::vector<uint8_t>& records,uint32_t& decoded,
+        const Cancellation&,std::string& error) {
+        ++calls;records.clear();decoded=0;
+        if(fail_call==calls){error="injected encoded reader error";return EJODIN4_CHECKSUM_MISMATCH;}
+        if(cancel_device){cancel_device->cancelled=true;error="encoded preparation cancelled";return EJODIN4_CANCELLED;}
+        decoded=uint32_t(std::min<uint64_t>(remaining,limit));
+        if(!decoded){if(extra){decoded=1;records.assign(1,0x6b);}return EJODIN4_OK;}
+        remaining-=decoded;if(short_decoded)--decoded;
+        uint32_t bytes=stored;if(calls<=record_sizes.size())bytes=record_sizes[calls-1];
+        if(oversized)bytes=31457280u+8u*(31457280u/65536u+1u)+1u;
+        if(!empty_records)records.assign(bytes,0x6b);
+        return EJODIN4_OK;
+    }
+};
 struct Fixture {
     FakePlatform p;
     DownloadChannel c;
@@ -197,9 +237,19 @@ struct Fixture {
     std::string error;
     std::vector<EJODIN4_PitEntry> pit;
     explicit Fixture(bool usb=false,uint32_t timeout_override=0):p(usb),c(p,make_cancel(&p.d)),s(c,SessionProgress(),timeout_override){}
-    EJODIN4_Status begin(uint64_t total=0){EJODIN4_Status r=c.open("bound-interface",16,30000,error);return r==EJODIN4_OK?s.begin(pit,error,total):r;}
+    EJODIN4_Status begin(uint64_t total=0,const FirmwareIdentity* identity=0){EJODIN4_Status r=c.open("bound-interface",16,30000,error);return r==EJODIN4_OK?s.begin(pit,error,total,identity):r;}
     PlanImage image(uint64_t n,bool large=false) {PlanImage i;i.decoded_bytes=n;i.route.identifier=1;i.route.device_type=2;i.large_partition=large;p.d.image_bytes=n;return i;}
 };
+
+void stock_encoded_tests(){
+ {Fixture f;f.p.d.protocol=3;check(f.begin(513)==EJODIN4_OK&&f.s.compression_supported(),"native compression capability");size_t before=f.p.d.transcript.size();PlanImage image=f.image(513);Reader raw(513);raw.fail=true;EncodedReader encoded(513);check(f.s.send_image(image,raw,f.error,&encoded)==EJODIN4_OK,"native encoded image avoids raw reader");check(f.p.d.transcript.size()==before+3,"encoded exact control count");const uint32_t subs[]={5,6,7};for(size_t i=0;i<3;++i)check(f.p.d.transcript[before+i][0]==0x66&&f.p.d.transcript[before+i][1]==subs[i],"native encoded begin/data/end sequence");const std::vector<uint32_t>& sizes=f.p.d.transcript[before+1];check(sizes[2]==73&&sizes[3]==513,"stored and decoded transfer lengths separate");const std::vector<uint32_t>& route=f.p.d.transcript[before+2];check(route[2]==0&&route[3]==513&&route[4]==0&&route[5]==2&&route[6]==1&&route[7]==1,"native encoded completion exact decoded length and PIT route");check(encoded.calls==2&&f.p.d.data_packet_sizes.size()==1&&f.p.d.data_packet_sizes[0]==1048576,"encoded EOF before padded packet");check(f.s.state().acknowledged_bytes==513&&f.s.state().images_completed==1,"decoded byte credit after completion");check(f.s.finish(false,f.error)==EJODIN4_OK,"encoded normal finalize");}
+ {const uint64_t bytes=31457280u+513u;Fixture f;f.p.d.protocol=3;check(f.begin(bytes)==EJODIN4_OK,"encoded multi sequence begin");PlanImage image=f.image(bytes);Reader raw(bytes);EncodedReader encoded(bytes);encoded.record_sizes.push_back(1048579);encoded.record_sizes.push_back(73);check(f.s.send_image(image,raw,f.error,&encoded)==EJODIN4_OK,"encoded multi sequence");check(f.p.d.encoded_completions.size()==2&&f.p.d.encoded_completions[0]==31457280&&f.p.d.encoded_completions[1]==513&&f.p.d.data_packet_sizes.size()==3,"encoded packet indices reset and exact logical sequence lengths");check(f.s.state().acknowledged_bytes==bytes&&f.s.finish(false,f.error)==EJODIN4_OK,"encoded multi complete");}
+ for(unsigned mode=0;mode<3;++mode){Fixture f(mode==2);f.p.d.protocol=mode==0?2:3;if(mode==1)f.p.d.begin_capability=false;check(f.begin(513)==EJODIN4_OK&&!f.s.compression_supported(),"only native v3 low capability enables encoded");if(mode==2)check(f.s.notify_total(513,f.error)==EJODIN4_OK,"WinUSB encoded gate total");unsigned commands=f.p.d.commands;PlanImage image=f.image(513);Reader raw(513);EncodedReader encoded(513);check(f.s.send_image(image,raw,f.error,&encoded)==EJODIN4_DRIVER_UNSUPPORTED&&f.p.d.commands==commands&&!f.s.state().any_write,"unnegotiated encoded cannot modify device");}
+ for(unsigned mode=0;mode<7;++mode){Fixture f;f.p.d.protocol=3;check(f.begin(513)==EJODIN4_OK,"encoded prep failure begin");PlanImage image=f.image(513);Reader raw(513);EncodedReader encoded(513);if(mode==0)encoded.fail_call=1;else if(mode==1)encoded.fail_call=2;else if(mode==2)encoded.short_decoded=true;else if(mode==3)encoded.empty_records=true;else if(mode==4)encoded.oversized=true;else if(mode==5)encoded.extra=true;else encoded.cancel_device=&f.p.d;unsigned commands=f.p.d.commands;EJODIN4_Status s=f.s.send_image(image,raw,f.error,&encoded);check(s==(mode<2?EJODIN4_CHECKSUM_MISMATCH:mode==6?EJODIN4_CANCELLED:EJODIN4_INVALID_COMPRESSED_DATA),"encoded prep exact error");check(f.p.d.commands==commands&&!f.s.state().any_write&&!f.s.state().acknowledged_bytes,"encoded prep errors precede first modifying command");}
+ for(unsigned mode=0;mode<7;++mode){Fixture f;f.p.d.protocol=3;check(f.begin(513)==EJODIN4_OK,"encoded wire failure begin");PlanImage image=f.image(513);Reader raw(513);EncodedReader encoded(513);if(mode==0)f.p.d.wrong_index=0;else if(mode==1)f.p.d.negative_data_ack=true;else if(mode==2)f.p.d.completion_fail=true;else if(mode==3)f.p.d.fail_write=true;else if(mode==4)f.p.d.cancel_encoded_packet=true;else{f.p.d.fail_command=0x66;f.p.d.fail_sub=mode==5?5:6;}EJODIN4_Status s=f.s.send_image(image,raw,f.error,&encoded);check(s==(mode==3?EJODIN4_USB_IO_ERROR:mode==4?EJODIN4_CANCELLED:EJODIN4_INVALID_RESPONSE),"encoded wire exact error");check(f.s.state().any_write&&!f.s.state().acknowledged_bytes&&!f.s.state().images_completed,"encoded completion failure cannot credit logical partition bytes");unsigned commands=f.p.d.commands;check(f.s.finish(true,f.error)!=EJODIN4_OK&&f.p.d.commands==commands&&!f.p.d.finishes,"encoded failed state cannot finalize");for(size_t i=0;i<f.p.d.transcript.size();++i){const std::vector<uint32_t>& c=f.p.d.transcript[i];check(c[0]!=0x66||(c[1]!=0&&c[1]!=2&&c[1]!=3),"encoded failure never raw retries");}}
+ {const uint64_t bytes=31457280u+513u;Fixture f;f.p.d.protocol=3;check(f.begin(bytes)==EJODIN4_OK,"late encoded failure begin");PlanImage image=f.image(bytes);Reader raw(bytes);EncodedReader encoded(bytes);encoded.fail_call=2;check(f.s.send_image(image,raw,f.error,&encoded)==EJODIN4_CHECKSUM_MISMATCH,"late encoded reader error");check(f.s.state().acknowledged_bytes==31457280&&!f.s.state().images_completed&&f.p.d.encoded_completions.size()==1,"late failure credits only complete sequences");}
+}
+
 void happy(uint64_t bytes,bool modern,bool usb,bool extra,bool large,bool metadata_tail=false) {
     Fixture f(usb);f.p.d.protocol=modern?2:1;f.p.d.packet=modern?1048576:131072;f.p.d.optional_mode=extra?1:0;
     f.p.d.metadata_tail_bytes=metadata_tail?4:0;
@@ -290,17 +340,26 @@ void stock_raw_golden() {
     check(partial.s.finish(true,partial.error)!=EJODIN4_OK && partial.p.d.commands==sent && !partial.p.d.finishes,"incomplete native ACK sends no completion or reboot");
 }
 
+void native_devinfo_versions(){
+ for(uint32_t version=4;version<=5;++version){FirmwareIdentity identity;identity.present=true;identity.model="SM-TEST_BUILD";
+ Fixture f;f.p.d.protocol=version;check(f.begin(513,&identity)==EJODIN4_OK,"native v4/v5 authenticates model before PIT");
+ Rows prefix;prefix.push_back(row(0x64,0,5));prefix.push_back(row(0x64,5,1048576));prefix.push_back(row(0x64,2,513));prefix.push_back(row(0x69,0));prefix.push_back(row(0x69,1));prefix.push_back(row(0x69,2));prefix.push_back(row(0x65,1));prefix.push_back(row(0x65,2));prefix.push_back(row(0x65,3));check(f.p.d.transcript==prefix,"native v4/v5 exact DEVINFO stage ordering");
+ PlanImage image=f.image(513);Reader reader(513);check(f.s.send_image(image,reader,f.error)==EJODIN4_OK&&f.s.finish(false,f.error)==EJODIN4_OK,"authenticated newer native raw completes");
+ Fixture readonly;readonly.p.d.protocol=version;check(readonly.begin()==EJODIN4_OK,"newer PIT read has no firmware authority requirement");check(readonly.s.notify_total(513,readonly.error)==EJODIN4_OK,"newer read only session records total");image=readonly.image(513);Reader denied(513);check(readonly.s.send_image(image,denied,readonly.error)==EJODIN4_DRIVER_UNSUPPORTED&&!readonly.s.state().any_write,"read only session cannot acquire unauthenticated write authority");
+ for(unsigned mode=0;mode<9;++mode){Fixture bad;bad.p.d.protocol=version;FirmwareIdentity context=identity;if(mode==0)context.present=false;if(mode==1)context.model="SM-OTHER";if(mode==2)context.blocked_carriers="_PLS_";if(mode==3)bad.p.d.devinfo_size_override=499;if(mode==4)put(&bad.p.d.devinfo[0],0);if(mode==5)put(&bad.p.d.devinfo[0]+12,0xffffffffu);if(mode==6)bad.p.d.devinfo_short=true;if(mode==7)bad.p.d.wrong_command=0x69;if(mode==8){context.present=false;context.status=EJODIN4_CHECKSUM_MISMATCH;context.diagnostic="Signed manifest authentication failed";}check(bad.begin(513,&context)!=EJODIN4_OK,"malformed DEVINFO or invalid package identity rejects");check(!bad.s.state().any_write&&!bad.p.d.images&&!bad.p.d.finishes,"DEVINFO rejection precedes all writes");for(size_t i=0;i<bad.p.d.transcript.size();++i){const std::vector<uint32_t>& row=bad.p.d.transcript[i];check(row[0]!=0x65&&row[0]!=0x66,"identity rejection precedes PIT and image commands");}}
+ }
+ Fixture missing;missing.p.d.protocol=5;put(&missing.p.d.devinfo[0]+4,1);check(missing.begin()!=EJODIN4_OK&&!missing.s.state().any_write,"v5 missing carrier rejected during readonly discovery");
+}
+
 void stock_versions_and_routes() {
     const uint32_t rejected[]={0,4,5,6,0x8002,0xffff};
     for(unsigned usb=0;usb<2;++usb)for(size_t k=0;k<sizeof(rejected)/sizeof(rejected[0]);++k) {
-        if(usb && k>=4)continue;
+        if((!usb&&(rejected[k]==4||rejected[k]==5))||(usb&&k>=4))continue;
         Fixture f(usb!=0);f.p.d.protocol=rejected[k];
-        check(f.begin(513)==EJODIN4_DRIVER_UNSUPPORTED,"unimplemented protocol rejected before PIT or transfer metadata");
-        Rows expected;expected.push_back(row(0x64,0,usb?0x7fffffffu:5u));
-        check(f.p.d.transcript==expected,"unsupported dialect sends negotiation only");
-        check(f.s.state().protocol_version==rejected[k] && !f.s.state().any_write && !f.p.d.finishes,"rejected stock protocol retains unsigned version and no write evidence");
-        const uint32_t commands=f.p.d.commands;
-        check(f.s.finish(true,f.error)!=EJODIN4_OK && commands==f.p.d.commands,"rejected dialect cannot finalize or reboot");
+        check(f.begin(513)==EJODIN4_DRIVER_UNSUPPORTED,"unknown transport dialect rejected before PIT metadata");
+        Rows expected;expected.push_back(row(0x64,0,usb?0x7fffffffu:5u));check(f.p.d.transcript==expected,"unknown dialect negotiation only");
+        check(f.s.state().protocol_version==rejected[k]&&!f.s.state().any_write&&!f.p.d.finishes,"unknown version retains no write evidence");
+        uint32_t commands=f.p.d.commands;check(f.s.finish(true,f.error)!=EJODIN4_OK&&commands==f.p.d.commands,"unknown version cannot finalize");
     }
     for(uint32_t version=1;version<=3;++version)for(unsigned capability=0;capability<2;++capability) {
         Fixture f;f.p.d.protocol=version;f.p.d.packet=version==1?131072:1048576;f.p.d.begin_capability=capability!=0;
@@ -513,6 +572,16 @@ void generic_storage_operation_tests(){
         if(mode==15)check(result.logical_sector_bytes==0&&events.validated,"mixed read-only PIT validation has no write-only result flag");
     }
 }
+void composed_encoded_dialect_tests(){
+ for(unsigned mode=0;mode<5;++mode){TempArchive temp;FakePlatform platform;platform.d.protocol=mode==0?1:mode==1?2:mode==2?3:mode==3?4:5;platform.d.packet=mode==0?131072:1048576;platform.d.begin_capability=mode!=2;put(&platform.d.pit[0]+28+4,2);
+ Bytes payload(513,0x5a);LZ4F_preferences_t prefs;std::memset(&prefs,0,sizeof(prefs));prefs.frameInfo.blockSizeID=LZ4F_max64KB;prefs.frameInfo.blockMode=LZ4F_blockIndependent;prefs.frameInfo.contentSize=payload.size();Bytes frame(LZ4F_compressFrameBound(payload.size(),&prefs));size_t size=LZ4F_compressFrame(&frame[0],frame.size(),&payload[0],payload.size(),&prefs);check(!LZ4F_isError(size),"compose eligible native encoded image");frame.resize(size);Bytes package;append_package(package,"boot.img.lz4",frame);append_package(package,"layout.pit",platform.d.pit);std::string p=temp.write(package);EJODIN4_FirmwareFile file={EJODIN4_PACKAGE_AP,p.c_str(),uint32_t(p.size()+1)};
+ EJODIN4_FlashRequest request=read_pit_request();request.operation=EJODIN4_FLASH_WRITE;request.files=&file;request.file_count=1;request.data_policy=EJODIN4_UPDATE_SELECTED;request.decoded_limit=1048576;EJODIN4_FlashResult result;std::memset(&result,0,sizeof(result));char diagnostic[1024]={0};CapacityEvents events;events.result=&result;events.device=&platform.d;
+ EJODIN4_Status status=flash_with_platform(platform,&request,&result,capacity_progress,0,&events,diagnostic,sizeof(diagnostic));
+ if(mode<3){check(status==EJODIN4_OK&&result.images_completed==1&&result.acknowledged_bytes==513&&(result.flags&EJODIN4_FLASH_FINALIZED),"eligible compressed archive uses decoded raw wire on older or capability-free dialect");check(platform.d.encoded_completions.empty(),"compressed eligibility does not force unavailable wire dialect");}
+ else{check(status==EJODIN4_DRIVER_UNSUPPORTED&&std::strstr(diagnostic,"signed")&&!platform.d.images&&!result.acknowledged_bytes&&!(result.flags&EJODIN4_FLASH_ANY_WRITE),"newer composed WRITE rejects missing signed identity before all image writes");check(platform.d.transcript.size()==1&&platform.d.transcript[0][0]==0x64,"missing identity rejects immediately after negotiation before DEVINFO or PIT");}
+ }
+}
+
 void automatic_userdata_capacity_tests(){
     for(unsigned usb=0;usb<2;++usb)for(unsigned mode=0;mode<3;++mode){
         TempArchive temp;FakePlatform platform(usb!=0);platform.d.pit.assign(28+4*132,0);put(&platform.d.pit[0],0x12349876);put(&platform.d.pit[0]+4,4);
@@ -557,7 +626,7 @@ void integrated_operation_tests(){
 }
 int main() {
     try {
-        stock_raw_golden();handshake_diagnostics();stock_versions_and_routes();
+        native_devinfo_versions();stock_encoded_tests();stock_raw_golden();handshake_diagnostics();stock_versions_and_routes();
         happy(513,true,false,false,false);
         happy(513,false,false,true,true);
         happy(30u*1024u*1024u+513u,true,false,false,true);
@@ -565,7 +634,7 @@ int main() {
         happy(513,true,false,false,false,true);
         happy(513,true,true,false,false,true);
         happy(uint64_t(0x100000000ull)+513,true,false,false,true);
-        delayed_data_ack_tests();failures();integrated_operation_tests();composed_route_guard_tests();generic_storage_operation_tests();automatic_userdata_capacity_tests();
+        delayed_data_ack_tests();failures();integrated_operation_tests();composed_route_guard_tests();generic_storage_operation_tests();composed_encoded_dialect_tests();automatic_userdata_capacity_tests();
         std::printf("Native BCC session fake tests passed (%u checks)\n",checks);return 0;
     } catch(const std::exception& e) {std::fprintf(stderr,"FAIL after %u checks: %s\n",checks,e.what());return 1;}
 }

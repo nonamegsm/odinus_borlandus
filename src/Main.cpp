@@ -254,7 +254,7 @@ static void layout(){if(!titleText)return;RECT r;GetClientRect(mainWindow,&r);in
 static void browse(int slot){wchar_t file[32768]={0};std::wstring current=textOf(paths[slot]);if(current.size()<32768)wcscpy(file,current.c_str());OPENFILENAMEW of;ZeroMemory(&of,sizeof(of));of.lStructSize=sizeof(of);of.hwndOwner=mainWindow;of.lpstrFilter=L"Samsung firmware (*.tar;*.tar.md5)\0*.tar;*.tar.md5\0All files\0*.*\0";of.lpstrFile=file;of.nMaxFile=32768;of.Flags=OFN_FILEMUSTEXIST|OFN_PATHMUSTEXIST|OFN_NOCHANGEDIR;if(GetOpenFileNameW(&of))SetWindowTextW(paths[slot],file);}
 static void saveLog(){wchar_t path[32768]=L"odin-session.log";OPENFILENAMEW of;ZeroMemory(&of,sizeof(of));of.lStructSize=sizeof(of);of.hwndOwner=mainWindow;of.lpstrFilter=L"Log files\0*.log\0All files\0*.*\0";of.lpstrFile=path;of.nMaxFile=32768;of.Flags=OFN_OVERWRITEPROMPT|OFN_NOCHANGEDIR;if(GetSaveFileNameW(&of)){if(!CopyFileW(logFilename.c_str(),path,FALSE))MessageBoxW(mainWindow,L"Cannot save log file.",L"Save log",MB_OK|MB_ICONERROR);}}
 static void loadEngine(){
-    if(EJODIN4_GetAbiVersion()!=0x1000a){appendLog(L"Native engine version mismatch.");setBusy(false);return;}
+    if(EJODIN4_GetAbiVersion()!=0x1000b){appendLog(L"Native engine version mismatch.");setBusy(false);return;}
     enumDevices=&EJODIN4_EnumerateDownloadDevices;probeDevice=&EJODIN4_ProbeDownloadConnection;
     inspectArchive=&EJODIN4_InspectFirmwareArchive;flashFirmware=&EJODIN4_FlashFirmware;
     engine=true;setBusy(false);appendLog(L"Odin BCC ready. Native Borland engine linked directly; no engine DLL and no USB device opened.");

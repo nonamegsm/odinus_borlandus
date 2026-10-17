@@ -1,10 +1,12 @@
 #ifndef EASYJTAG_ODIN4_FIRMWARE_STREAM_H
 #define EASYJTAG_ODIN4_FIRMWARE_STREAM_H
 #include "Odin4UsbTransport.h"
+#include "Odin4DeviceInfo.h"
 #include "BccCompat.h"
 #include <memory>
 #include <cstring>
 #include <string>
+#include <sstream>
 #include <vector>
 namespace ejodin4 {
 class ImageReader {
@@ -16,6 +18,21 @@ public:
     // Actual stored input consumed, excluding prefetched but undecoded bytes.
     virtual uint64_t stored_bytes_processed() const { return 0; }
 };
+class EncodedImageReader {
+public:
+    virtual ~EncodedImageReader() {}
+    // Returns original LZ4 block records only. OK with zero decoded bytes is validated EOF.
+    virtual EJODIN4_Status read_sequence(uint32_t decoded_limit, std::vector<uint8_t>& records,
+        uint32_t& decoded_bytes, const Cancellation& cancel, std::string& error) = 0;
+};
+// A short, indexed label preserves verification identity without truncating
+// long archive paths into identical progress names or splitting UTF-8 bytes.
+inline std::string verification_member_name(const char* stage,size_t member,const std::string& path) {
+    const size_t slash=path.find_last_of("/\\");
+    std::string name=path.substr(slash==std::string::npos?0:slash+1);
+    if(name.size()>160){size_t cut=160;while(cut&&((static_cast<unsigned char>(name[cut])&0xc0)==0x80))--cut;name.resize(cut);}
+    std::ostringstream text;text<<stage<<" "<<(member+1)<<": "<<name;return text.str();
+}
 struct VerificationProgress {
     uint32_t phase,role,archive_index,archive_count;
     VerificationProgress():phase(0),role(0),archive_index(0),archive_count(0),completed_bytes(0),total_bytes(0){}
@@ -45,8 +62,16 @@ public:
     EJODIN4_ArchiveSummary summary;
     HeldArchive(){std::memset(&summary,0,sizeof(summary));}
     virtual EJODIN4_Status verify_unchanged(std::string& error) const = 0;
+    virtual EJODIN4_Status open_stored_member(size_t, std::unique_ptr<ImageReader>&,std::string& error) {
+        error="Stored archive access is unavailable";return EJODIN4_DRIVER_UNSUPPORTED;
+    }
     virtual EJODIN4_Status open_member(size_t index, std::unique_ptr<ImageReader>& reader,
         std::string& error) = 0;
+    virtual EJODIN4_Status open_encoded_member(size_t, const PlanImage&,
+        std::unique_ptr<EncodedImageReader>& reader, std::string& error,
+        const Cancellation& = Cancellation(), const ArchiveScanCallback& = ArchiveScanCallback()) {
+        reader.reset(); error="Archive has no native encoded reader"; return EJODIN4_DRIVER_UNSUPPORTED;
+    }
 };
 EJODIN4_Status open_held_archive(const EJODIN4_FirmwareFile& file,
     const Cancellation& cancel, std::unique_ptr<HeldArchive>& output, std::string& error,
@@ -67,8 +92,12 @@ public:
     EJODIN4_Status validate_device_pit(const std::vector<EJODIN4_PitEntry>& pit,
         uint32_t verified_sector_bytes, std::string& error,
         uint64_t verified_userdata_capacity_bytes = 0);
+    EJODIN4_Status authenticate_identity(FirmwareIdentity& identity,const Cancellation& cancel,
+        const VerificationCallback& progress = VerificationCallback());
     EJODIN4_Status open_image(size_t index, std::unique_ptr<ImageReader>& reader,
         std::string& error);
+    EJODIN4_Status open_encoded_image(size_t index, std::unique_ptr<EncodedImageReader>& reader,
+        std::string& error, const Cancellation& cancel = Cancellation(), const ArchiveScanCallback& progress = ArchiveScanCallback());
     std::vector<HeldArchive*> archives;
 private:
     FirmwareSet(const FirmwareSet&);
