@@ -136,6 +136,15 @@ class OwnedUI:
         assert result, f'Missing control {identifier}'
         return result
     def log(self): return text(self.control(164))
+    def full_log(self):
+        line=next(line for line in self.log().splitlines() if line.startswith('Session log: '))
+        return Path(line[len('Session log: '):]).read_text(encoding='utf-8')
+    def checked(self,index): return U.SendMessageW(self.control(400+index),0xF0,0,0)==1
+    def toggle(self,index,checked):
+        if self.checked(index)!=checked:
+            U.SendMessageW(self.control(400+index),0xF5,0,0)
+        assert self.checked(index)==checked
+
     def click_offline(self,identifier):
         assert identifier in (203,206), 'Only offline plan and cancel are permitted'
         assert U.IsWindowEnabled(self.control(identifier)), f'Control {identifier} is disabled'
@@ -156,7 +165,7 @@ def layout_case(ui,width,height,artifacts):
     bounds=rect(ui.window)
     assert bounds[2]-bounds[0]==width and bounds[3]-bounds[1]==height
     client=W.RECT(); U.GetClientRect(ui.window,C.byref(client))
-    ids=list(range(120,126))+list(range(201,208))+[103,141,142,160,161,162,163,164,165]+list(range(300,306))+list(range(310,316))
+    ids=list(range(400,406))+list(range(120,126))+list(range(201,208))+[103,141,142,160,161,162,163,164,165]+list(range(300,306))+list(range(310,316))
     controls={}
     for identifier in ids:
         controls[str(identifier)]=r=rect(ui.control(identifier),ui.window)
@@ -198,6 +207,38 @@ def main():
             assert not U.IsWindowEnabled(ui.control(206))
             assert U.SendMessageW(ui.control(161),0x408,0,0)==0
             results['layouts']=[layout_case(ui,1140,840,artifacts),layout_case(ui,1040,760,artifacts)]
+            assert all(ui.checked(i) for i in range(6))
+            log_class=C.create_unicode_buffer(256);U.GetClassNameW(ui.control(164),log_class,len(log_class))
+            assert log_class.value.lower()=='richedit20w', log_class.value
+            for i in range(6):
+                retained=str(scratch/f'retained-slot-{i}.tar.md5');set_text(ui.control(120+i),retained)
+                before=ui.log();ui.toggle(i,False)
+                assert text(ui.control(120+i))==retained
+                assert not any(U.IsWindowEnabled(ui.control(n)) for n in (120+i,300+i,310+i))
+                assert U.IsWindowEnabled(ui.control(400+i)) and ui.log()==before
+                ui.toggle(i,True)
+                assert all(U.IsWindowEnabled(ui.control(n)) for n in (120+i,300+i,310+i))
+                assert text(ui.control(120+i))==retained
+                set_text(ui.control(120+i),'')
+            results['cases'].append('six native checked slots retain paths, toggle input state without work; system RichEdit active')
+            for i in range(6):ui.toggle(i,False)
+            before=ui.log().count('Choose at least one firmware image archive.')
+            ui.click_offline(203)
+            wait_for(lambda:ui.log().count('Choose at least one firmware image archive.')>before)
+            assert not U.IsWindowEnabled(ui.control(206))
+            for i in range(6):ui.toggle(i,True)
+            ui.toggle(3,False);set_text(ui.control(123),str(scratch/'HOME_CSC_disabled.tar.md5'))
+            set_text(ui.control(125),str(scratch/'CSC_conflicting.tar.md5'));set_text(ui.control(121),str(scratch/'AP.tar.md5'))
+            ui.click_offline(203);wait_for(lambda:'Conflicting PIT references' in ui.log())
+            assert U.IsWindowEnabled(ui.control(203)) and not U.IsWindowEnabled(ui.control(206))
+            set_text(ui.control(120),str(scratch/'BL.tar.md5'));set_text(ui.control(122),str(scratch/'CP.tar.md5'))
+            U.SendMessageW(ui.control(141),0x14E,1,0)
+            ui.click_offline(203);wait_for(lambda:'Select Update selected slots to omit required' in ui.log())
+            assert U.SendMessageW(ui.control(141),0x147,0,0)==1
+            U.SendMessageW(ui.control(141),0x14E,0,0);ui.toggle(3,True)
+            for i in range(6):set_text(ui.control(120+i),'')
+            results['cases'].append('all off and conflicting metadata reject before worker; required policy never silently changes')
+
             ui.click_offline(203)
             wait_for(lambda:'Choose at least one firmware image archive.' in ui.log())
             assert U.IsWindowEnabled(ui.control(203))
@@ -206,7 +247,7 @@ def main():
             ui.click_offline(203)
             wait_for(lambda:'FAILED:' in ui.log() and U.IsWindowEnabled(ui.control(203)))
             assert not U.IsWindowEnabled(ui.control(206))
-            assert 'any write: yes' not in ui.log()
+            assert 'any write: yes' not in ui.full_log()
             results['cases'].append('nonexistent firmware file returns failure and restores controls')
             # A private plain TAR is hashed/decoded only; there is no device path.
             archive=scratch/'cancel-fixture.tar'
@@ -214,6 +255,8 @@ def main():
                 member=tarfile.TarInfo('boot.img'); member.size=32*1024*1024
                 tar.addfile(member,io.BytesIO(b'\0'*member.size))
             set_text(ui.control(121),str(archive))
+            set_text(ui.control(124),str(archive))
+            ui.toggle(3,False);ui.toggle(4,False)
             before=ui.log().count('FAILED:')
             ui.click_offline(203); ui.click_offline(206)
             wait_for(lambda:ui.log().count('FAILED:')>before and U.IsWindowEnabled(ui.control(203)))
@@ -221,6 +264,13 @@ def main():
             assert 'cancel' in text(ui.control(165)).lower()
             assert not U.IsWindowEnabled(ui.control(206))
             assert 'Refresh devices ---' not in ui.log()
+            assert not ui.checked(3) and not ui.checked(4)
+            assert not any(U.IsWindowEnabled(ui.control(n)) for n in (123,303,313,124,304,314))
+            assert text(ui.control(124))==str(archive)
+            assert U.IsWindowEnabled(ui.control(403)) and U.IsWindowEnabled(ui.control(404))
+            results['cases'].append('offline cancellation retains unchecked CSC and duplicate USERDATA paths with inputs disabled after join')
+            ui.toggle(3,True);ui.toggle(4,True);set_text(ui.control(124),'')
+            screenshot(ui.window,artifacts/'ui-coloured-offline-log.bmp')
             results['cases'].append('offline verification cancellation drains and restores controls')
             if args.firmware_dir:
                 def firmware(prefix):
@@ -234,7 +284,7 @@ def main():
                 previous=ui.log().count('SUCCESS:')
                 ui.click_offline(203)
                 wait_for(lambda:ui.log().count('SUCCESS:')>previous and U.IsWindowEnabled(ui.control(203)),timeout=240)
-                log=ui.log()
+                log=ui.full_log()
                 assert 'images 0/26' in log and 'any write: no' in log
                 assert 'finalized: yes' not in log
                 assert 'Using matching CSC for PIT metadata only:' in log
@@ -252,7 +302,63 @@ def main():
                 results['realPlanTotalBytes']=11882352976
                 results['realPlanImages']=26
                 results['cases'].append('actual BL/AP/CP/HOME in USERDATA and reference yields 26-image offline plan; only reference becomes CSC')
+                assert 'Archive role ' not in ui.log() and 'SHA256 ' not in ui.log()
+                assert 'Plan: 26 images' in ui.log()
+                assert sum(line.startswith('Plan [') for line in ui.log().splitlines())==26
                 screenshot(ui.window,artifacts/'ui-real-plan.bmp')
+                # Retain CSC selection as metadata while excluding all CSC images.
+                for index,value in enumerate([firmware('BL_'),firmware('AP_'),firmware('CP_'),firmware('HOME_CSC_'),firmware('BL_'),'']):
+                    set_text(ui.control(120+index),value)
+                ui.toggle(3,False);ui.toggle(4,False)
+                previous=ui.log().count('SUCCESS:');ui.click_offline(203)
+                assert not any(U.IsWindowEnabled(ui.control(400+i)) for i in range(6))
+                wait_for(lambda:ui.log().count('SUCCESS:')>previous and U.IsWindowEnabled(ui.control(203)),timeout=240)
+                assert 'Plan: 23 images' in ui.log()
+                assert not ui.checked(3) and not ui.checked(4)
+                assert not U.IsWindowEnabled(ui.control(123)) and not U.IsWindowEnabled(ui.control(124))
+                assert text(ui.control(123))==firmware('HOME_CSC_') and text(ui.control(124))==firmware('BL_')
+                assert not U.IsWindowEnabled(ui.control(206)) and U.SendMessageW(ui.control(103),0x146,0,0)==0
+                results['cases'].append('actual BL AP CP plan omits unchecked CSC/USERDATA images, retains CSC metadata and disabled duplicate, 23 images')
+                screenshot(ui.window,artifacts/'ui-real-plan-csc-unchecked.bmp')
+                generic=scratch/'generic-reference.tar'
+                with tarfile.open(generic,'w',format=tarfile.USTAR_FORMAT) as tar:
+                    member=tarfile.TarInfo('readme.txt');payload=b'PIT metadata reference fixture';member.size=len(payload)
+                    tar.addfile(member,io.BytesIO(payload))
+                for i in range(6):
+                    ui.toggle(i,True);set_text(ui.control(120+i),'')
+                set_text(ui.control(123),firmware('CSC_'));set_text(ui.control(125),str(generic))
+                previous=ui.log().count('SUCCESS:');ui.click_offline(203)
+                wait_for(lambda:ui.log().count('SUCCESS:')>previous and U.IsWindowEnabled(ui.control(203)),timeout=120)
+                assert 'Plan: 3 images' in ui.log()
+                full=ui.full_log();segment=full[full.rfind('--- Offline plan ---'):]
+                assert 'Archive role 4: '+firmware('CSC_') in segment
+                assert 'Archive role 7: '+firmware('CSC_') in segment
+                assert 'Using matching CSC for PIT metadata only:' in segment
+                assert 'Archive role 7: '+str(generic) not in segment
+                results['cases'].append('generic no-PIT reference reuses explicitly selected CSC as metadata without changing its image role, 3 images')
+                set_text(ui.control(123),'');set_text(ui.control(122),firmware('CP_'))
+                previous=ui.log().count('SUCCESS:');ui.click_offline(203)
+                wait_for(lambda:ui.log().count('SUCCESS:')>previous and U.IsWindowEnabled(ui.control(203)),timeout=120)
+                assert 'Plan: 2 images' in ui.log()
+                full=ui.full_log();segment=full[full.rfind('--- Offline plan ---'):]
+                assert 'Archive role 3: '+firmware('CP_') in segment
+                assert 'Archive role 7: '+firmware('CSC_') in segment and 'Archive role 4:' not in segment
+                assert 'Archive role 7: '+str(generic) not in segment
+                results['cases'].append('generic no-PIT reference resolves unique validated sibling by replacing role7 only; CP remains 2 images')
+                missing_home=scratch/'HOME_CSC_missing_match.tar';shutil.copy2(generic,missing_home)
+                set_text(ui.control(125),str(missing_home));previous=ui.log().count('FAILED:');ui.click_offline(203)
+                wait_for(lambda:ui.log().count('FAILED:')>previous and U.IsWindowEnabled(ui.control(203)))
+                assert 'exact matching CSC archive is missing or unreadable' in ui.log()
+                segment=ui.full_log()[ui.full_log().rfind('--- Offline plan ---'):]
+                assert 'Using matching CSC for PIT metadata only:' not in segment and 'Archive role ' not in segment
+                results['cases'].append('HOME_CSC reference missing exact mate fails closed instead of discovering unrelated CSC')
+                corrupt=scratch/'corrupt-reference.tar';corrupt.write_bytes(b'invalid archive')
+                set_text(ui.control(125),str(corrupt));previous=ui.log().count('FAILED:');ui.click_offline(203)
+                wait_for(lambda:ui.log().count('FAILED:')>previous and U.IsWindowEnabled(ui.control(203)))
+                segment=ui.full_log()[ui.full_log().rfind('--- Offline plan ---'):]
+                assert 'Cannot inspect reference:' in ui.log() and 'Archive role ' not in segment
+                results['cases'].append('corrupt explicit reference fails inspection instead of bypassing it via sibling fallback')
+
 
             (artifacts/'ui-session.log').write_text(ui.log(),encoding='utf-8')
         finally: ui.close()

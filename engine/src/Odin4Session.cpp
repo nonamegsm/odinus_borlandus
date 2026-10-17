@@ -7,6 +7,15 @@ namespace ejodin4 {
 namespace {
 std::string decimal(uint32_t value){std::ostringstream out;out<<value;return out.str();}
 const uint32_t sequence_bytes = 30u * 1024u * 1024u;
+uint32_t stock_sequence_bytes(const EJODIN4_PitEntry& route) {
+    if(route.binary_type!=0)return 0;
+    switch(route.device_type) {
+    case 1:case 2:case 8:return sequence_bytes;
+    case 6:return 4u*1024u*1024u;
+    case 7:return 1024u*1024u;
+    default:return 0;
+    }
+}
 uint32_t le32(const uint8_t* p) { return uint32_t(p[0])|uint32_t(p[1])<<8|uint32_t(p[2])<<16|uint32_t(p[3])<<24; }
 void put32(uint8_t* p,uint32_t v) { for(unsigned i=0;i<4;++i) p[i]=uint8_t(v>>(i*8)); }
 }
@@ -48,22 +57,36 @@ EJODIN4_Status Session::command(uint32_t cmd,uint32_t sub,const uint32_t* words,
     if(s!=EJODIN4_OK) return fail(s,"Write Odin request failed",error);
     return response(cmd,capability,timeout,error,cmd==0x64 && sub==1);
 }
-EJODIN4_Status Session::begin(std::vector<EJODIN4_PitEntry>& output,std::string& error) {
+EJODIN4_Status Session::begin(std::vector<EJODIN4_PitEntry>& output,std::string& error,uint64_t planned_total) {
     if(begun_ || failed_ || !channel_.opened()) { error="Odin session cannot begin"; return EJODIN4_INVALID_ARGUMENT; }
     state_.transport=channel_.transport();
     phase(EJODIN4_PHASE_HANDSHAKE);
     EJODIN4_Status s=channel_.handshake(error);
     if(s!=EJODIN4_OK) return fail(s,"Odin handshake failed",error);
     phase(EJODIN4_PHASE_NEGOTIATING);
-    uint32_t max_protocol=0x7fffffffu;
+    uint32_t max_protocol=channel_.transport()==EJODIN4_DOWNLOAD_SAMSUNG_SERIAL?5u:0x7fffffffu;
     s=command(0x64,0,&max_protocol,1,true,channel_.timeout(),error);
     if(s!=EJODIN4_OK) return s;
-    state_.protocol_version=(state_.last_ack>>16)&0x7fffu;
-    // Publish the unsigned capability word before later command ACKs replace it.
+    state_.negotiation_ack=state_.last_ack;
+    const bool stock=channel_.transport()==EJODIN4_DOWNLOAD_SAMSUNG_SERIAL;
+    state_.protocol_version=(state_.negotiation_ack>>16)&(stock?0xffffu:0x7fffu);
     phase(EJODIN4_PHASE_NEGOTIATING);
+    // Versions 4/5 require native DEVINFO and device-policy validation, which
+    // this raw engine does not implement. Do not enter a partial newer flow.
+    if(state_.protocol_version<1 || state_.protocol_version>3) {
+        error="Unsupported Samsung Download protocol "+decimal(state_.protocol_version)+
+            "; reviewed raw versions are 1..3. Versions 4/5 require unimplemented DEVINFO validation";
+        return fail(EJODIN4_DRIVER_UNSUPPORTED,"Unsupported Odin protocol",error);
+    }
     if(state_.protocol_version>1) {
         packet_bytes_=1048576; if(!timeout_override_) flash_timeout_=120000;
         s=command(0x64,5,&packet_bytes_,1,false,channel_.timeout(),error);
+        if(s!=EJODIN4_OK) return s;
+    }
+    // Native stock-driver Odin announces the decoded transfer total before PIT.
+    // This is session metadata only; image commands remain behind live layout validation.
+    if(planned_total && channel_.transport()==EJODIN4_DOWNLOAD_SAMSUNG_SERIAL) {
+        s=announce_total(planned_total,error);
         if(s!=EJODIN4_OK) return s;
     }
     s=command(0x65,1,0,0,false,channel_.timeout(),error);
@@ -79,7 +102,7 @@ EJODIN4_Status Session::begin(std::vector<EJODIN4_PitEntry>& output,std::string&
         s=channel_.write_exact(request,sizeof(request),timeout_override_?timeout_override_:channel_.timeout(),error);
         if(s!=EJODIN4_OK) return fail(s,"PIT block request failed",error);
         const uint32_t size=std::min<uint32_t>(500,pit_size-offset);
-        s=channel_.read_exact(&pit[0]+offset,size,timeout_override_?timeout_override_:channel_.timeout(),error);
+        s=channel_.read_exact((&pit[0])+offset,size,timeout_override_?timeout_override_:channel_.timeout(),error);
         if(s!=EJODIN4_OK) return fail(s,"Raw PIT block read failed",error);
         offset+=size;
     }
@@ -98,13 +121,15 @@ EJODIN4_Status Session::begin(std::vector<EJODIN4_PitEntry>& output,std::string&
     if(s!=EJODIN4_OK) return s;
     std::vector<EJODIN4_PitEntry> entries(512);
     uint32_t count=0;char diagnostic[512]={0};
-    s=EJODIN4_ParsePit(&pit[0],pit_size,&entries[0],512,&count,diagnostic,sizeof(diagnostic));
+    s=EJODIN4_ParsePit((&pit[0]),pit_size,(&entries[0]),512,&count,diagnostic,sizeof(diagnostic));
     if(s!=EJODIN4_OK) { error=std::string("Device PIT rejected: ")+diagnostic;return fail(s,"Device PIT parse failed",error); }
     entries.resize(count);
     // The pinned query and post-file counter reset have identical 64/1 wire
     // requests. Establish their 8/12-byte framing before any image can be sent.
-    s=command(0x64,1,0,0,false,channel_.timeout(),error);
-    if(s!=EJODIN4_OK)return s;
+    if(channel_.transport()==EJODIN4_DOWNLOAD_WINUSB) {
+        s=command(0x64,1,0,0,false,channel_.timeout(),error);
+        if(s!=EJODIN4_OK)return s;
+    }
     pit_bytes_.swap(pit);
     output.swap(entries);begun_=true;
     phase(EJODIN4_PHASE_PIT_READY);
@@ -112,24 +137,45 @@ EJODIN4_Status Session::begin(std::vector<EJODIN4_PitEntry>& output,std::string&
 }
 EJODIN4_Status Session::notify_total(uint64_t total,std::string& error) {
     if(!begun_ || failed_ || total_set_ || !total) { error="Invalid Odin transfer total";return EJODIN4_INVALID_ARGUMENT; }
-    const uint32_t words[]={uint32_t(total),uint32_t(total>>32)};
+    return announce_total(total,error);
+}
+EJODIN4_Status Session::announce_total(uint64_t total,std::string& error) {
+    // Actual Odin3 uses base UINT32_MAX, rather than a little-endian uint64.
+    const bool stock=channel_.transport()==EJODIN4_DOWNLOAD_SAMSUNG_SERIAL;
+    const uint32_t words[]={stock?uint32_t(total%UINT64_C(0xffffffff)):uint32_t(total),
+        stock?uint32_t(total/UINT64_C(0xffffffff)):uint32_t(total>>32)};
     EJODIN4_Status s=command(0x64,2,words,2,false,channel_.timeout(),error);
     if(s==EJODIN4_OK) { total_=total;total_set_=true; }
     return s;
+}
+EJODIN4_Status Session::validate_image(const PlanImage& image,std::string& error) {
+    if(!begun_ || failed_) {error="Odin session cannot validate image routes";return EJODIN4_INVALID_ARGUMENT;}
+    if(channel_.transport()==EJODIN4_DOWNLOAD_SAMSUNG_SERIAL && !stock_sequence_bytes(image.route)) {
+        error="Unsupported Samsung stock-driver image route: binary type "+decimal(image.route.binary_type)+
+            ", device type "+decimal(image.route.device_type)+"; no reviewed raw transfer flow";
+        return fail(EJODIN4_DRIVER_UNSUPPORTED,"Unsupported Odin route",error);
+    }
+    return EJODIN4_OK;
 }
 EJODIN4_Status Session::send_image(const PlanImage& image,ImageReader& reader,std::string& error) {
     if(!begun_ || failed_ || !total_set_ || !image.decoded_bytes || image.decoded_bytes>total_-state_.acknowledged_bytes) {
         error="Invalid Odin image or transfer state";return EJODIN4_INVALID_ARGUMENT;
     }
+    const EJODIN4_Status validated=validate_image(image,error);
+    if(validated!=EJODIN4_OK)return validated;
     state_.image_acknowledged_bytes=0;
     uint64_t remaining=image.decoded_bytes;
     bool first=true;
+    // The native raw dispatcher uses the same framing for versions 1..3;
+    // legacy negotiation changes packet size, not sequence begin/completion.
+    const bool native_raw=channel_.transport()==EJODIN4_DOWNLOAD_SAMSUNG_SERIAL;
+    const uint32_t sequence_limit=native_raw?stock_sequence_bytes(image.route):sequence_bytes;
     // A full sequence is decoded before XMITSTART. The device never waits for
     // archive reads or decoding between a sequence request and its data packets.
-    std::vector<uint8_t> buffer(sequence_bytes);
+    std::vector<uint8_t> buffer(sequence_limit);
     while(remaining) {
-        const uint32_t original=uint32_t(std::min<uint64_t>(remaining,sequence_bytes));
-        const uint32_t real=image.large_partition?((original+511u)/512u)*512u:original;
+        const uint32_t original=uint32_t(std::min<uint64_t>(remaining,sequence_limit));
+        const uint32_t real=!native_raw && image.large_partition?((original+511u)/512u)*512u:original;
         const uint32_t aligned=((real+packet_bytes_-1u)/packet_bytes_)*packet_bytes_;
         std::fill(buffer.begin(),buffer.begin()+aligned,static_cast<uint8_t>(0));
         uint32_t filled=0;
@@ -137,7 +183,7 @@ EJODIN4_Status Session::send_image(const PlanImage& image,ImageReader& reader,st
             EJODIN4_Status s=channel_.interrupted(error);
             if(s!=EJODIN4_OK) return fail(s,"Image decode cancelled",error);
             uint32_t actual=0;
-            s=reader.read(&buffer[0]+filled,original-filled,actual,channel_.cancellation(),error);
+            s=reader.read((&buffer[0])+filled,original-filled,actual,channel_.cancellation(),error);
             if(s!=EJODIN4_OK) return fail(s,"Read image stream failed",error);
             if(!actual || actual>original-filled) { error="Image stream ended early or returned excess bytes";return fail(EJODIN4_USB_IO_ERROR,"Image size mismatch",error); }
             filled+=actual;
@@ -148,7 +194,7 @@ EJODIN4_Status Session::send_image(const PlanImage& image,ImageReader& reader,st
             if(s!=EJODIN4_OK) return fail(s,"Image EOF verification failed",error);
             if(actual) { error="Image stream exceeds validated decoded size";return fail(EJODIN4_USB_IO_ERROR,"Image size mismatch",error); }
         }
-        if(first) {
+        if(first || native_raw) {
             // File-begin may already change flash state on some Loke builds.
             state_.any_write=true;
             phase(EJODIN4_PHASE_IMAGE_BEGIN);
@@ -156,11 +202,14 @@ EJODIN4_Status Session::send_image(const PlanImage& image,ImageReader& reader,st
             if(s!=EJODIN4_OK) return s;
             first=false;
         }
-        EJODIN4_Status s=command(0x66,2,&aligned,1,false,channel_.timeout(),error);
+        // The start command is 128-KiB aligned, while actual writes remain full
+        // negotiated packets, including zero padding in the last packet.
+        const uint32_t start_bytes=native_raw?((original+131071u)/131072u)*131072u:aligned;
+        EJODIN4_Status s=command(0x66,2,&start_bytes,1,false,channel_.timeout(),error);
         if(s!=EJODIN4_OK) return s;
         for(uint32_t offset=0,index=0;offset<aligned;offset+=packet_bytes_,++index) {
             state_.any_write=true; // The following call may write partially before failure.
-            s=channel_.write_exact(&buffer[0]+offset,packet_bytes_,flash_timeout_,error);
+            s=channel_.write_exact((&buffer[0])+offset,packet_bytes_,flash_timeout_,error);
             if(s!=EJODIN4_OK) return fail(s,"Image packet write failed",error);
             s=response(0,false,flash_timeout_,error);
             if(s!=EJODIN4_OK) return s;
@@ -185,8 +234,10 @@ EJODIN4_Status Session::send_image(const PlanImage& image,ImageReader& reader,st
     ++state_.images_completed;
     // Pinned odin4 resets its flash counter after each successfully completed
     // file. A failed reset cannot undo that file, but forbids further commands.
-    const EJODIN4_Status reset=command(0x64,1,0,0,false,channel_.timeout(),error);
-    if(reset!=EJODIN4_OK) return reset;
+    if(channel_.transport()==EJODIN4_DOWNLOAD_WINUSB) {
+        const EJODIN4_Status reset=command(0x64,1,0,0,false,channel_.timeout(),error);
+        if(reset!=EJODIN4_OK) return reset;
+    }
     phase(EJODIN4_PHASE_IMAGE_COMPLETE);
     return EJODIN4_OK;
 }

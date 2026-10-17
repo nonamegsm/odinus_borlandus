@@ -1,5 +1,6 @@
 // Offline tests only: every USB/discovery/time/I/O call below uses fake seams.
 #include "Odin4UsbTransport.h"
+#include "Odin4SamsungSerial.h"
 #include <algorithm>
 #include <cstring>
 #include <iostream>
@@ -223,6 +224,13 @@ public:
     void abort_and_cancel() { events.push_back("abort+cancel"); }
     void drain() { events.push_back("drain"); }
 };
+void test_serial_deadline_policy(){
+    const struct {uint64_t now,until;uint32_t read_ms,write_ms;} cases[]={{100,120100,30000,120000},{100,30100,30000,30000},{100,1100,1000,1000},{100,101,1,1},{0,UINT64_MAX,30000,UINT32_MAX-1u}};
+    for(size_t i=0;i<sizeof(cases)/sizeof(cases[0]);++i){ejodin4::SerialTimeoutPolicy policy;check(ejodin4::serial_timeout_policy(cases[i].now,cases[i].until,policy),"serial timeout policy accepts remaining deadline");check(policy.read_first_byte_ms==cases[i].read_ms && policy.write_total_ms==cases[i].write_ms,"serial first-byte cap and write budget follow independent literal deadline vectors");}
+    ejodin4::SerialTimeoutPolicy sentinel;sentinel.read_first_byte_ms=123;sentinel.write_total_ms=456;
+    check(!ejodin4::serial_timeout_policy(100,100,sentinel) && sentinel.read_first_byte_ms==123 && sentinel.write_total_ms==456,"expired serial timeout leaves prior policy untouched");
+    check(!ejodin4::serial_timeout_policy(101,100,sentinel),"past deadline rejected without unsigned subtraction");
+}
 void test_pending() {
     uint32_t actual = 99; std::string error;
     { FakePending io; check(ejodin4::finish_pending(io,100,never,actual,error) == EJODIN4_OK && actual == 3,
@@ -244,7 +252,7 @@ void test_alternate_ordinals(){Descriptor d={0};uint8_t ordinal=99;std::vector<u
 
 }
 int main() {
-    try { test_probe(); test_inputs_and_enumeration(); test_pending(); test_alternate_ordinals();
+    try { test_probe(); test_inputs_and_enumeration(); test_pending(); test_alternate_ordinals(); test_serial_deadline_policy();
         std::cout << "Native BCC fake USB transport tests passed: " << checks << " checks\n"; return 0;
     } catch (const std::exception& e) { std::cerr << "Odin4 fake USB failure after " << checks << ": " << e.what() << '\n'; return 1; }
 }

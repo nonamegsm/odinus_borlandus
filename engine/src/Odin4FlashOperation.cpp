@@ -187,7 +187,7 @@ EJODIN4_Status perform(const EJODIN4_FlashRequest& request, EJODIN4_FlashResult&
     if (status != EJODIN4_OK) return status;
     Session session(channel,SessionProgress(Events::session_changed,&events),request.io_timeout_ms);
     std::vector<EJODIN4_PitEntry> pit;
-    status = session.begin(pit, error);
+    status = session.begin(pit, error, request.operation == EJODIN4_FLASH_WRITE ? firmware->total_bytes : 0);
     if (status == EJODIN4_OK) {
         output.pit_entry_count = static_cast<uint32_t>(pit.size());
         for (size_t k=0;k<pit.size();++k) events.emit(EJODIN4_PHASE_PIT_ENTRY,&pit[k]);
@@ -210,8 +210,14 @@ EJODIN4_Status perform(const EJODIN4_FlashRequest& request, EJODIN4_FlashResult&
         }
     }
     if (status == EJODIN4_OK && request.operation == EJODIN4_FLASH_WRITE) {
-        status = firmware->verify_unchanged(error);
-        if (status == EJODIN4_OK) status = session.notify_total(firmware->total_bytes, error);
+        // Reject every unsupported route before any earlier image can be written.
+        for(size_t route_index=0;route_index<firmware->images.size();++route_index) {
+            status=session.validate_image(firmware->images[route_index],error);
+            if(status!=EJODIN4_OK)break;
+        }
+        if(status==EJODIN4_OK)status = firmware->verify_unchanged(error);
+        if (status == EJODIN4_OK && channel.transport() == EJODIN4_DOWNLOAD_WINUSB)
+            status = session.notify_total(firmware->total_bytes, error);
         for (size_t i = 0; status == EJODIN4_OK && i < firmware->images.size(); ++i) {
             events.image = &firmware->images[i]; events.index = static_cast<uint32_t>(i);
             std::unique_ptr<ImageReader> reader;

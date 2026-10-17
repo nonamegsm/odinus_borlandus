@@ -2,11 +2,18 @@
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <sstream>
 namespace ejodin4 {
 namespace {
 uint64_t deadline(Platform& p, uint32_t timeout) {
     const uint64_t now = p.now();
     return now > UINT64_MAX - timeout ? UINT64_MAX : now + timeout;
+}
+std::string decimal(uint32_t value){std::ostringstream out;out<<value;return out.str();}
+EJODIN4_Status transfer_failure(EJODIN4_Status status, bool read, uint32_t completed, uint32_t requested, std::string& error) {
+    error = std::string("Download ") + (read ? "read" : "write") + " stopped after " +
+        decimal(completed) + "/" + decimal(requested) + " bytes: " + error;
+    return status;
 }
 uint32_t le32(const uint8_t* p) {
     return uint32_t(p[0]) | uint32_t(p[1]) << 8 | uint32_t(p[2]) << 16 | uint32_t(p[3]) << 24;
@@ -70,21 +77,24 @@ EJODIN4_Status DownloadChannel::exact(bool read, uint8_t* data, uint32_t bytes, 
     uint32_t offset = 0;
     while (offset < bytes) {
         EJODIN4_Status status = interrupted(error);
-        if (status != EJODIN4_OK) return status;
-        if (platform_.now() >= until) { error = "Download transfer timed out"; return EJODIN4_TIMEOUT; }
+        if (status != EJODIN4_OK) return transfer_failure(status, read, offset, bytes, error);
+        if (platform_.now() >= until) { error = "Download transfer timed out"; return transfer_failure(EJODIN4_TIMEOUT, read, offset, bytes, error); }
         uint32_t actual = 0;
         const uint64_t before = platform_.now();
         status = serial_.get() ? serial_->transfer(read, data + offset, bytes - offset, actual, until, cancel_, error) :
             usb_->transfer(pipes_.interface_index, read ? pipes_.in : pipes_.out,
                 data + offset, bytes - offset, actual, until, cancel_, error);
-        if (status != EJODIN4_OK) return status;
-        if (cancel_.requested()) { error = "Download session cancelled"; return EJODIN4_CANCELLED; }
+        if (status != EJODIN4_OK) return transfer_failure(status, read, offset, bytes, error);
+        if (cancel_.requested()) { error = "Download session cancelled"; return transfer_failure(EJODIN4_CANCELLED, read, offset, bytes, error); }
         if (!actual && read && serial_.get() && platform_.now() > before) continue;
-        if (!actual || actual > bytes - offset) { error = "Invalid or empty Download transfer"; return EJODIN4_USB_IO_ERROR; }
+        if (!actual || actual > bytes - offset) { error = "Invalid or empty Download transfer"; return transfer_failure(EJODIN4_USB_IO_ERROR, read, offset, bytes, error); }
         offset += actual;
     }
     // USB packet boundaries are not bytes and must never be emulated on serial.
-    if (!read && usb_.get() && bytes % pipes_.out_packet == 0) return usb_boundary(false, error);
+    if (!read && usb_.get() && bytes % pipes_.out_packet == 0) {
+        const EJODIN4_Status status = usb_boundary(false, error);
+        if (status != EJODIN4_OK) return transfer_failure(status, read, offset, bytes, error);
+    }
     return EJODIN4_OK;
 }
 EJODIN4_Status DownloadChannel::read_exact(uint8_t* p,uint32_t n,uint32_t t,std::string& e) { return exact(true,p,n,t,e); }
@@ -94,10 +104,11 @@ EJODIN4_Status DownloadChannel::write_exact(const uint8_t* p,uint32_t n,uint32_t
 EJODIN4_Status DownloadChannel::handshake(std::string& error) {
     static const uint8_t hello[] = {'O','D','I','N'};
     EJODIN4_Status s = write_exact(hello,4,timeout_,error);
-    if (s != EJODIN4_OK) return s;
-    uint8_t reply[4] = {0};
+    if (s != EJODIN4_OK) { error = "ODIN handshake write failed: " + error; return s; }
+    uint8_t reply[4]={0};
     s = read_exact(reply,4,timeout_,error);
-    if (s == EJODIN4_OK && std::memcmp(reply,"LOKE",4)) { error = "Download handshake did not return LOKE"; return EJODIN4_BAD_HANDSHAKE; }
+    if (s != EJODIN4_OK) { error = "Waiting for LOKE reply failed: " + error; return s; }
+    if (std::memcmp(reply,"LOKE",4)) { error = "Download handshake did not return LOKE"; return EJODIN4_BAD_HANDSHAKE; }
     return s;
 }
 EJODIN4_Status DownloadChannel::optional_pit_ack(uint32_t& id,uint32_t& ack,bool& present,std::string& error) {

@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <exception>
 #include <stdexcept>
+#include <sstream>
 
 static_assert(sizeof(EJODIN4_DownloadProbe) == 12, "Download probe ABI");
 namespace ejodin4 {
@@ -19,6 +20,15 @@ struct DownloadInterruption {
         return EJODIN4_OK;
     }
 };
+}
+
+bool serial_timeout_policy(uint64_t now, uint64_t deadline, SerialTimeoutPolicy& policy) {
+    if (now >= deadline) return false;
+    const uint64_t remaining = deadline - now;
+    const uint32_t bounded = static_cast<uint32_t>(std::min<uint64_t>(remaining, UINT32_MAX - 1u));
+    policy.read_first_byte_ms = std::min<uint32_t>(bounded, 30000u);
+    policy.write_total_ms = bounded;
+    return true;
 }
 
 bool valid_com_port(const std::wstring& port) {
@@ -108,13 +118,21 @@ std::string serial_error(const char* action, DWORD code = GetLastError()) {
     char number[32]; std::sprintf(number,"%lu",(unsigned long)code);
     return std::string(action) + " (Windows error " + number + ")";
 }
+std::string serial_decimal(uint64_t value){std::ostringstream out;out<<value;return out.str();}
+EJODIN4_Status serial_transfer_failure(EJODIN4_Status status,bool read,uint32_t requested,uint32_t actual,
+    uint64_t started,uint64_t budget,DWORD native_error,const char* stage,std::string& error) {
+    error=std::string("Samsung serial ")+(read?"read":"write")+" "+stage+"; requested "+serial_decimal(requested)+
+        ", reported "+serial_decimal(actual)+" bytes; elapsed "+serial_decimal(GetTickCount64()-started)+
+        "/"+serial_decimal(budget)+" ms; terminal Windows error "+serial_decimal(native_error)+": "+error;
+    return status;
+}
 class SerialPending : public PendingIo {
     HANDLE file_;
     bool active_;
-    DWORD wait_error_;
+    DWORD wait_error_,terminal_error_;
 public:
     OVERLAPPED overlapped;
-    explicit SerialPending(HANDLE file) : file_(file), active_(false), wait_error_(0) {
+    explicit SerialPending(HANDLE file) : file_(file), active_(false), wait_error_(0), terminal_error_(ERROR_SUCCESS) {
         ZeroMemory(&overlapped,sizeof(overlapped));
         overlapped.hEvent = CreateEventW(0, TRUE, FALSE, 0);
         if (!overlapped.hEvent) throw std::runtime_error(serial_error("Create Samsung serial completion event"));
@@ -123,6 +141,7 @@ public:
         if (active_) { abort_and_cancel(); drain(); }
         CloseHandle(overlapped.hEvent);
     }
+    DWORD terminal_error() const { return terminal_error_; }
     void submitted() { active_ = true; }
     uint64_t now() const { return GetTickCount64(); }
     bool wait(uint32_t milliseconds) {
@@ -137,6 +156,7 @@ public:
         DWORD transferred = 0;
         const BOOL ok = GetOverlappedResult(file_, &overlapped, &transferred, FALSE);
         const DWORD code = ok ? ERROR_SUCCESS : GetLastError();
+        terminal_error_ = code;
         if (!HasOverlappedIoCompleted(&overlapped)) { abort_and_cancel(); drain(); }
         else active_ = false;
         actual = static_cast<uint32_t>(transferred);
@@ -147,7 +167,10 @@ public:
     void drain() {
         if (!active_) return;
         DWORD transferred = 0;
-        do { GetOverlappedResult(file_, &overlapped, &transferred, TRUE); }
+        do {
+            const BOOL complete=GetOverlappedResult(file_, &overlapped, &transferred, TRUE);
+            terminal_error_=complete?ERROR_SUCCESS:GetLastError();
+        }
         while (!HasOverlappedIoCompleted(&overlapped));
         active_ = false;
     }
@@ -156,8 +179,27 @@ class NativeSerial : public SerialConnection {
     HANDLE file_;
     COMMTIMEOUTS original_;
     bool restore_;
+    DWORD timeout_error_;
+    EJODIN4_Status apply_deadline(uint64_t deadline, std::string& error) {
+        timeout_error_ = ERROR_SUCCESS;
+        SerialTimeoutPolicy policy;
+        if (!serial_timeout_policy(GetTickCount64(), deadline, policy)) {
+            error = "Samsung serial deadline expired before timeout configuration"; return EJODIN4_TIMEOUT;
+        }
+        COMMTIMEOUTS bounded = {0};
+        bounded.ReadIntervalTimeout = MAXDWORD;
+        bounded.ReadTotalTimeoutMultiplier = MAXDWORD;
+        bounded.ReadTotalTimeoutConstant = policy.read_first_byte_ms;
+        bounded.WriteTotalTimeoutConstant = policy.write_total_ms;
+        restore_ = true;
+        if (!SetCommTimeouts(file_, &bounded)) {
+            timeout_error_ = GetLastError();
+            error = serial_error("Set deadline-based Samsung communication timeouts", timeout_error_); return EJODIN4_USB_IO_ERROR;
+        }
+        return EJODIN4_OK;
+    }
 public:
-    NativeSerial() : file_(INVALID_HANDLE_VALUE), restore_(false) { ZeroMemory(&original_,sizeof(original_)); }
+    NativeSerial() : file_(INVALID_HANDLE_VALUE), restore_(false), timeout_error_(ERROR_SUCCESS) { ZeroMemory(&original_,sizeof(original_)); }
     ~NativeSerial() {
         if (file_ != INVALID_HANDLE_VALUE) {
             if (restore_) SetCommTimeouts(file_, &original_);
@@ -178,31 +220,26 @@ public:
             OPEN_EXISTING, FILE_FLAG_OVERLAPPED, 0);
         if (file_ == INVALID_HANDLE_VALUE) { error = serial_error("Open selected Samsung modem interface (device may be busy)"); return EJODIN4_USB_IO_ERROR; }
         if (!GetCommTimeouts(file_, &original_)) { error = serial_error("Read Samsung communication timeouts"); return EJODIN4_USB_IO_ERROR; }
-        COMMTIMEOUTS bounded = {0};
-        // Return available bytes or wait at most the total caller timeout for
-        // the first byte; finish_pending enforces its finer deadline/cancel.
-        bounded.ReadIntervalTimeout = MAXDWORD;
-        bounded.ReadTotalTimeoutMultiplier = MAXDWORD;
-        bounded.ReadTotalTimeoutConstant = 30000;
-        bounded.WriteTotalTimeoutConstant = 30000;
-        restore_ = true;
-        if (!SetCommTimeouts(file_, &bounded)) { error = serial_error("Set bounded Samsung communication timeouts"); return EJODIN4_USB_IO_ERROR; }
-        return EJODIN4_OK;
+        return apply_deadline(deadline,error);
     }
-    EJODIN4_Status transfer(bool read, uint8_t* data, uint32_t capacity,
-        uint32_t& actual, uint64_t deadline, const Cancellation& cancel, std::string& error) {
-        actual = 0;
-        if (cancel.requested()) { error = "Samsung serial transfer cancelled"; return EJODIN4_CANCELLED; }
-        if (GetTickCount64() >= deadline) { error = "Samsung serial transfer timed out"; return EJODIN4_TIMEOUT; }
+    EJODIN4_Status transfer(bool read,uint8_t* data,uint32_t capacity,uint32_t& actual,
+        uint64_t deadline,const Cancellation& cancel,std::string& error) {
+        actual=0;
+        const uint64_t started=GetTickCount64();
+        const uint64_t budget=started<deadline?deadline-started:0;
+        if(cancel.requested()){error="cancel requested";return serial_transfer_failure(EJODIN4_CANCELLED,read,capacity,actual,started,budget,ERROR_SUCCESS,"before submission",error);}
+        if(started>=deadline){error="caller deadline expired";return serial_transfer_failure(EJODIN4_TIMEOUT,read,capacity,actual,started,budget,ERROR_SUCCESS,"before submission",error);}
+        EJODIN4_Status status=apply_deadline(deadline,error);
+        if(status!=EJODIN4_OK)return serial_transfer_failure(status,read,capacity,actual,started,budget,timeout_error_,"before submission",error);
         SerialPending pending(file_);
-        DWORD transferred = 0;
-        const BOOL ok = read ? ReadFile(file_, data, capacity, &transferred, &pending.overlapped)
-            : WriteFile(file_, data, capacity, &transferred, &pending.overlapped);
-        if (ok) { actual = static_cast<uint32_t>(transferred); return EJODIN4_OK; }
-        const DWORD code = GetLastError();
-        if (code != ERROR_IO_PENDING) { error = serial_error("Submit Samsung serial transfer", code); return EJODIN4_USB_IO_ERROR; }
+        DWORD transferred=0;
+        const BOOL ok=read?ReadFile(file_,data,capacity,&transferred,&pending.overlapped):WriteFile(file_,data,capacity,&transferred,&pending.overlapped);
+        if(ok){actual=static_cast<uint32_t>(transferred);return EJODIN4_OK;}
+        const DWORD code=GetLastError();
+        if(code!=ERROR_IO_PENDING){error=serial_error("Submit Samsung serial transfer",code);return serial_transfer_failure(EJODIN4_USB_IO_ERROR,read,capacity,actual,started,budget,code,"submission failed",error);}
         pending.submitted();
-        return finish_pending(pending, deadline, cancel, actual, error);
+        status=finish_pending(pending,deadline,cancel,actual,error);
+        return status==EJODIN4_OK?status:serial_transfer_failure(status,read,capacity,actual,started,budget,pending.terminal_error(),"completion failed",error);
     }
     EJODIN4_Status read_optional_frame(uint8_t* bytes, uint32_t size, bool& present, uint64_t deadline,
         const Cancellation& cancel, std::string& error) {

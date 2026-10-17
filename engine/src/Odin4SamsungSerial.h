@@ -17,6 +17,8 @@ public:
         return EJODIN4_DRIVER_UNSUPPORTED;
     }
 };
+struct SerialTimeoutPolicy { uint32_t read_first_byte_ms,write_total_ms; };
+bool serial_timeout_policy(uint64_t now,uint64_t deadline,SerialTimeoutPolicy& policy);
 bool valid_com_port(const std::wstring& port);
 EJODIN4_Status probe_download(Platform& platform, const char* path, uint32_t bytes,
     uint32_t timeout, EJODIN4_DownloadProbe* output, const Cancellation& cancel,

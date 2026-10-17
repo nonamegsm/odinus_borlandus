@@ -2,7 +2,7 @@
 
 Standalone Samsung Download-mode firmware application, built entirely with **classic Borland/Embarcadero BCC32 6.90** from C++Builder XE7 / Studio 15.0.
 
-The UI, archive validation, LZ4 decoding, PIT/layout validation, session protocol, Samsung stock-driver transport and WinUSB transport compile into **one native x86 executable**. There is no private Odin engine DLL, DLL loader, MinGW engine or MSVC build dependency. Standard Windows system libraries are used normally.
+The UI, archive validation, LZ4 decoding, PIT/layout validation, session protocol, Samsung stock-driver transport and WinUSB transport compile into **one native x86 executable**. There is no private Odin engine DLL, external engine loader, MinGW engine or MSVC build dependency. Standard Windows system libraries are used normally; the coloured log uses the Windows RichEdit control.
 
 ## Build
 
@@ -43,16 +43,18 @@ Outputs live under bin/Debug and bin/Release; objects/response files live under 
 
 ## Use
 
-1. Choose firmware archives. Empty image slots remain unselected under Update selected slots. CSC / HOME_CSC is detected from its filename; USERDATA is an archive slot, not an instruction to write userdata.img.
+1. Enable the archive slots you want to use and choose their firmware files. Unchecking a slot retains its path and disables its controls. Unchecked/empty image slots remain unselected under Update selected slots; an unchecked CSC can supply PIT metadata without image writes. CSC / HOME_CSC is detected from its filename; USERDATA is an archive slot, not an instruction to write userdata.img.
 2. Prepare an offline plan before writing. A PIT reference supplies metadata only. A PIT-less HOME_CSC reference resolves to its exact matching CSC sibling without adding CSC image transfers.
 3. For device operations, connect Download mode, Refresh and explicitly select a supported Samsung modem or WinUSB interface.
 4. Check link only performs the handshake; Read device PIT performs a read session. Flash uses the selected data policy and asks for confirmation before writing.
-5. Progress separates verification, overall acknowledged bytes and current-image acknowledged bytes. Milestones/errors go to the log; packet samples do not flood it. Session logs are saved under the executable's logs/ folder.
+5. Progress separates verification, overall acknowledged bytes and current-image acknowledged bytes. The coloured log shows one line per ordered image and concise milestones/results, without emoticons. Full technical session logs are saved under the executable's logs/ folder.
 6. Cancel requests safe engine cancellation. It cannot undo writes; an unhealthy driver may take time to release pending I/O.
 
 Update selected slots excludes USERDATA, MISC and OMR destinations. Preserve mode requires the OEM download list. Clean installation permits data erasure. No package PIT is uploaded and no repartition operation is exposed. Source hashes, route consistency, live/package PIT matching and capacity checks remain enforced. Automatic geometry is restricted to the reviewed SM-S921B BYH2 layout; other layouts require verified geometry and are rejected by this simple UI when unresolved.
 
-The source port preserves 1 MiB modern Odin packets, 30 MiB sequences and the negotiated 120-second data/ACK timeout. No 32/64 KiB write-size workaround or Knox-policy bypass is introduced. Successful offline tests do not establish that the earlier physical PRISM/Knox issue is fixed.
+The native stock-driver path uses the reviewed negotiation/framing sequence, exact decoded completion lengths and route-dependent sequence limits (30 MiB for types 1/2/8, 4 MiB for type 6 and 1 MiB for type 7). Modern packets remain 1 MiB with the 120-second data/ACK timeout. Raw protocol versions 1–3 are supported; versions 4/5 are rejected before image writes because their DEVINFO flow is not implemented. Every planned route is checked before the first image write. No 32/64 KiB workaround or Knox-policy bypass is introduced.
+
+A fully acknowledged and finalized stock-driver flash whose separate reboot confirmation fails is reported as completed with a warning; the reboot flag remains unconfirmed. Incomplete writes, failed finalization, unexpected replies, invalid metadata and cancellation remain errors. The user reported successful flashing and normal Android startup with the EasyJTAG implementation; this native Borland synchronization has not been physically flashed.
 
 See tests/ and docs/VERIFICATION.md for repeatable validation and its limits.
 
@@ -62,3 +64,5 @@ See tests/ and docs/VERIFICATION.md for repeatable validation and its limits.
     py tests/run_tests.py --build-app --configuration Release
 
 Optional --reviewed-pit <package.pit> and --firmware-dir <folder> enable real-file offline coverage. The ready-to-run portable build is in [dist/](dist/). No operation starts automatically.
+
+The test runner verifies the manifest-named executable and its source/header/object snapshot before testing, including the fallback filename used when an older executable is locked. See [today's parity record](docs/2026-10-17-sync.md) for the source commits covered.

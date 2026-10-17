@@ -59,6 +59,37 @@ def pe_imports(path):
     return sorted(set(names),key=str.lower)
 
 
+
+def verified_output(configuration, root=ROOT):
+    """Return the manifest-named native executable only for an intact build snapshot."""
+    root=Path(root).resolve()
+    output=root/"bin"/configuration
+    manifest=json.loads((output/"build-manifest.json").read_text(encoding="utf-8"))
+    if manifest.get("configuration")!=configuration or manifest.get("native_engine") is not True or manifest.get("private_runtime_dll_required") is not False:
+        raise RuntimeError("Build manifest is not the requested native configuration")
+    record=manifest.get("executable",{})
+    name=record.get("file","")
+    if not name or "/" in name or "\\" in name or ":" in name or name in (".",".."):
+        raise RuntimeError("Unsafe executable name in build manifest")
+    executable=output/name
+    try:executable.resolve().relative_to(output.resolve())
+    except ValueError:raise RuntimeError("Executable resolves outside configured output")
+    if not executable.is_file() or executable.stat().st_size!=record.get("bytes") or digest(executable)!=record.get("sha256"):
+        raise RuntimeError("Built executable does not match its manifest")
+    for group in ("sources","headers","objects"):
+        records=manifest.get(group)
+        if not records:
+            raise RuntimeError("Build manifest omits "+group)
+        for item in records:
+            path=(root/item["file"]).resolve()
+            try:path.relative_to(root)
+            except ValueError:raise RuntimeError("Build snapshot path escapes project: "+item["file"])
+            if not path.is_file() or digest(path)!=item["sha256"]:
+                raise RuntimeError("Build snapshot changed; rebuild before testing: "+item["file"])
+    pe_imports(executable)
+    return executable
+
+
 def verify_vendor():
     vendor=ROOT/"engine/vendor"
     for manifest_name,subdirectory in (("LZ4.json","lz4"),("UPSTREAM.json","upstream")):
@@ -161,7 +192,7 @@ def main():
               "executable":{"file":executable.name,"sha256":digest(executable),"bytes":executable.stat().st_size},
               "objects":[{"file":str(p.relative_to(ROOT)),"sha256":digest(p)} for p in objects],
               "sources":[{"file":str(p.relative_to(ROOT)),"sha256":digest(p)} for p in sources],
-              "headers":[{"file":str(p.relative_to(ROOT)),"sha256":digest(p)} for directory in (ROOT/"include",ROOT/"engine/include",ROOT/"engine/src") for p in sorted(directory.glob("*.h"))],
+              "headers":[{"file":str(p.relative_to(ROOT)),"sha256":digest(p)} for directory in (ROOT/"include",ROOT/"engine/include",ROOT/"engine/src",ROOT/"src") for p in sorted(directory.glob("*.h"))],
               "pe_imports":imports,"notices":notices}
     (out/"build-manifest.json").write_text(json.dumps(manifest,indent=2)+"\n",encoding="utf-8")
     print("Built standalone native engine: "+str(executable)+"; "+str(len(objects))+" BCC32 objects; no private Odin DLL")
