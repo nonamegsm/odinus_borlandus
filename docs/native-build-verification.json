@@ -1,42 +1,33 @@
 {
-  "sync": {
+  "feature": {
     "date": "2026-10-18",
-    "easyjtag_revision": "9718301339e47ad7fb578e250a2350f34e34d964",
-    "bcc_base_revision": "b45304035bc38de903cd30ebe503c19d082923a3",
-    "easyjtag_worktree_inputs": [
-      {
-        "file": "src/android_info/Odin4Runtime.h",
-        "sha256": "a9ddae1f05a7f5ba008a1b15d17498b9cbd025a3e53aa1b4f29345ae6c45c60c"
-      },
-      {
-        "file": "src/android_info/OperationLog.h",
-        "sha256": "2b12e3712531b92e51df145a214605a45b2f5eaf656ce35fdf3feafe313d5995"
-      },
-      {
-        "file": "src/AndroidInfoToolPage.cpp",
-        "sha256": "08c860cc24ae4032032476c97c65daa408e8eadcba8b11af90567ec1a250dbf5"
-      }
-    ],
-    "native_checks_per_configuration": 11407664,
-    "logger_checks_per_configuration": 234,
-    "manifest_regressions": 7,
-    "physical_device_operations": 0,
-    "abi_version": 65547,
-    "pit_units": {
-      "2": 512,
-      "8": 4096
+    "name": "explicit-repartition-v1",
+    "abi_version": 65548,
+    "source_base_revision": "8be265de09a9b5390b3433448653b3e870da2116",
+    "operation": 3,
+    "raw_pit_target_role": 8,
+    "offline_candidate_plan_flag": 4,
+    "result_flags": {
+      "pit_write_started": 64,
+      "pit_uploaded": 128,
+      "pit_verified": 256
     },
-    "mixed_units_result_flag": 32,
-    "engine_protocol_changes": false,
-    "engine_linkage": "native classic BCC32 static executable",
-    "dll_lifetime_fix": "not applicable: engine is linked into the executable"
+    "record_bytes": {
+      "request": 64,
+      "progress": 537,
+      "result": 68
+    },
+    "required_policy": "CLEAN_INSTALL with BL/AP/CP/CSC",
+    "transport": "Samsung stock modem driver only",
+    "reference_uploads": false,
+    "physical_device_operations": 0
   },
   "configurations": {
     "Debug": {
       "executable": {
         "file": "OdinBCC.exe",
-        "sha256": "9403eadb9b70e88a1835bff2ed3a833a578c4cec8d907e7ba1e1355a083a485b",
-        "bytes": 877568
+        "sha256": "c68d4e3cf0d837a3361cfd2b95468e5eaa60a980a33d6f2d16359f1f543a252c",
+        "bytes": 894464
       },
       "objects": 16,
       "imports": [
@@ -57,7 +48,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "PASS native classic BCC core: 832 checks; no DLL loads or device I/O\n",
-          "seconds": 0.512
+          "seconds": 0.504
         },
         {
           "target": "native_archive_tests",
@@ -66,7 +57,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "PASS native classic BCC archive: 173 checks; no DLL or device I/O\n",
-          "seconds": 0.615
+          "seconds": 0.56
         },
         {
           "target": "native_streaming_tests",
@@ -74,8 +65,8 @@
           "static_engine_objects": 15,
           "private_dll": false,
           "exit_code": 0,
-          "output": "native streaming: 841 checks passed\n",
-          "seconds": 1.981
+          "output": "native streaming: 979 checks passed\n",
+          "seconds": 1.886
         },
         {
           "target": "native_session_tests",
@@ -83,8 +74,8 @@
           "static_engine_objects": 15,
           "private_dll": false,
           "exit_code": 0,
-          "output": "Native BCC session fake tests passed (11405308 checks)\n",
-          "seconds": 6.317
+          "output": "Native BCC session fake tests passed (12974522 checks)\n",
+          "seconds": 6.793
         },
         {
           "target": "native_transport_tests",
@@ -93,7 +84,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "Native BCC fake USB transport tests passed: 299 checks\n",
-          "seconds": 0.399
+          "seconds": 0.378
         },
         {
           "target": "native_firmware_identity_tests",
@@ -102,7 +93,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "Signed manifest tests passed: 112 checks; no manufacturer-private-key fixture is available.\n",
-          "seconds": 0.855
+          "seconds": 0.875
         },
         {
           "target": "native_device_info_tests",
@@ -111,7 +102,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "PASS DEVINFO parser/policy: 21 checks; no device I/O\n",
-          "seconds": 0.288
+          "seconds": 0.287
         },
         {
           "target": "ui_logic_tests",
@@ -119,11 +110,11 @@
           "static_engine_objects": 15,
           "private_dll": false,
           "exit_code": 0,
-          "output": "PASS BCC UI logic: 78 checks; no device I/O\n",
-          "seconds": 0.273
+          "output": "PASS BCC UI logic: 152 checks; no device I/O\n",
+          "seconds": 0.322
         }
       ],
-      "nativeChecks": 11407664,
+      "nativeChecks": 12977090,
       "loggerTests": {
         "configuration": "Debug",
         "returncode": 0,
@@ -131,23 +122,33 @@
         "output": "Session log: 234 checks, 0 failures\n"
       },
       "loggerChecks": 234,
+      "manifestRegressions": 7,
       "uiCases": [
         "copied EXE starts standalone with native engine and no private DLL",
         "six native checked slots retain paths, toggle input state without work; system RichEdit active",
+        "separate raw target defaults disabled, retains path, explicitly selects clean policy; preserve/reference/TAR/PIT-only reject before worker",
         "all off and conflicting metadata reject before worker; required policy never silently changes",
         "blank archive selection rejected before worker",
         "timestamped durable worker result and GUI completion markers persist once; concise UI unchanged",
         "nonexistent firmware file returns failure and restores controls",
         "offline cancellation retains unchecked CSC and duplicate USERDATA paths with inputs disabled after join",
-        "offline verification cancellation drains and restores controls"
+        "offline verification cancellation drains and restores controls",
+        "raw PIT overrides differing valid embedded PIT in clean full four-slot offline plan without device I/O",
+        "clean full four-slot offline plan selects embedded PIT when separate raw field is blank",
+        "embedded repartition offline plan rejects capacity before device connection or PIT write",
+        "embedded repartition offline plan rejects stock-route before device connection or PIT write"
+      ],
+      "uiLayouts": [
+        "1140x840",
+        "1040x760"
       ],
       "manifestSnapshotVerified": true
     },
     "Release": {
       "executable": {
         "file": "OdinBCC.exe",
-        "sha256": "bf3a369c2ef886bb2b75215a8028ee6d849a3e5c8fe63fe791850d65c6145d5c",
-        "bytes": 2209280
+        "sha256": "e550558270ddf5039a03c15722ba8813069074080e90fb0d956b4b3d4e1cdc5b",
+        "bytes": 2299904
       },
       "objects": 16,
       "imports": [
@@ -168,7 +169,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "PASS native classic BCC core: 832 checks; no DLL loads or device I/O\n",
-          "seconds": 0.471
+          "seconds": 0.485
         },
         {
           "target": "native_archive_tests",
@@ -177,7 +178,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "PASS native classic BCC archive: 173 checks; no DLL or device I/O\n",
-          "seconds": 0.548
+          "seconds": 0.53
         },
         {
           "target": "native_streaming_tests",
@@ -185,8 +186,8 @@
           "static_engine_objects": 15,
           "private_dll": false,
           "exit_code": 0,
-          "output": "native streaming: 841 checks passed\n",
-          "seconds": 1.841
+          "output": "native streaming: 979 checks passed\n",
+          "seconds": 1.773
         },
         {
           "target": "native_session_tests",
@@ -194,8 +195,8 @@
           "static_engine_objects": 15,
           "private_dll": false,
           "exit_code": 0,
-          "output": "Native BCC session fake tests passed (11405308 checks)\n",
-          "seconds": 6.207
+          "output": "Native BCC session fake tests passed (12974522 checks)\n",
+          "seconds": 6.622
         },
         {
           "target": "native_transport_tests",
@@ -213,7 +214,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "Signed manifest tests passed: 112 checks; no manufacturer-private-key fixture is available.\n",
-          "seconds": 0.689
+          "seconds": 0.756
         },
         {
           "target": "native_device_info_tests",
@@ -222,7 +223,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "PASS DEVINFO parser/policy: 21 checks; no device I/O\n",
-          "seconds": 0.277
+          "seconds": 0.269
         },
         {
           "target": "ui_logic_tests",
@@ -230,11 +231,11 @@
           "static_engine_objects": 15,
           "private_dll": false,
           "exit_code": 0,
-          "output": "PASS BCC UI logic: 78 checks; no device I/O\n",
-          "seconds": 0.256
+          "output": "PASS BCC UI logic: 152 checks; no device I/O\n",
+          "seconds": 0.296
         }
       ],
-      "nativeChecks": 11407664,
+      "nativeChecks": 12977090,
       "loggerTests": {
         "configuration": "Release",
         "returncode": 0,
@@ -242,51 +243,71 @@
         "output": "Session log: 234 checks, 0 failures\n"
       },
       "loggerChecks": 234,
+      "manifestRegressions": 7,
       "uiCases": [
         "copied EXE starts standalone with native engine and no private DLL",
         "six native checked slots retain paths, toggle input state without work; system RichEdit active",
+        "separate raw target defaults disabled, retains path, explicitly selects clean policy; preserve/reference/TAR/PIT-only reject before worker",
         "all off and conflicting metadata reject before worker; required policy never silently changes",
         "blank archive selection rejected before worker",
         "timestamped durable worker result and GUI completion markers persist once; concise UI unchanged",
         "nonexistent firmware file returns failure and restores controls",
         "offline cancellation retains unchecked CSC and duplicate USERDATA paths with inputs disabled after join",
         "offline verification cancellation drains and restores controls",
-        "actual BL/AP/CP/HOME in USERDATA and reference yields 26-image offline plan; only reference becomes CSC",
-        "actual BL AP CP plan omits unchecked CSC/USERDATA images, retains CSC metadata and disabled duplicate, 23 images",
-        "generic no-PIT reference reuses explicitly selected CSC as metadata without changing its image role, 3 images",
-        "generic no-PIT reference resolves unique validated sibling by replacing role7 only; CP remains 2 images",
-        "HOME_CSC reference missing exact mate fails closed instead of discovering unrelated CSC",
-        "corrupt explicit reference fails inspection instead of bypassing it via sibling fallback"
+        "raw PIT overrides differing valid embedded PIT in clean full four-slot offline plan without device I/O",
+        "clean full four-slot offline plan selects embedded PIT when separate raw field is blank",
+        "embedded repartition offline plan rejects capacity before device connection or PIT write",
+        "embedded repartition offline plan rejects stock-route before device connection or PIT write"
+      ],
+      "uiLayouts": [
+        "1140x840",
+        "1040x760"
       ],
       "manifestSnapshotVerified": true
     }
   },
-  "ideEntryPoints": [
-    {
-      "ide_selection": "Base",
-      "native_configuration": "Debug",
-      "exit_code": 0
-    }
-  ],
   "physicalDeviceOperations": 0,
-  "realOfflinePlan": {
-    "images": 26,
-    "bytes": 11882352976,
-    "knownPayloadDigestsMatched": 3,
-    "otherExpectedImageCounts": [
-      23,
-      3,
-      2
-    ]
-  },
   "portable": {
     "path": "dist/OdinBCC.exe",
-    "sha256": "bf3a369c2ef886bb2b75215a8028ee6d849a3e5c8fe63fe791850d65c6145d5c",
-    "bytes": 2209280
+    "sha256": "e550558270ddf5039a03c15722ba8813069074080e90fb0d956b4b3d4e1cdc5b",
+    "bytes": 2299904
   },
+  "visualVerdict": {
+    "score": 93,
+    "threshold": 90,
+    "threshold_pass": true,
+    "verdict": "pass",
+    "category_match": true,
+    "differences": [
+      "A separate raw PIT row adds 38 pixels above the policy row and reduces the log viewport by 38 pixels.",
+      "The policy selector is narrower to accommodate the explicit repartition checkbox; the long selected-update label is clipped at minimum width but remains selectable in the dropdown."
+    ],
+    "suggestions": [],
+    "reasoning": "Default and minimum captures retain the established native UI, all six archive rows and an independently disabled raw-PIT input. Actions, progress bars, status and log remain readable without overlap at 1140x840 and1040x760.",
+    "next_actions": [],
+    "reference_images": [
+      ".omx/research/2026-10-17-parity/ui-1140x840.png"
+    ],
+    "generated_images": [
+      "tests/ui-artifacts-release/ui-1140x840.bmp",
+      "tests/ui-artifacts-release/ui-1040x760.bmp",
+      ".omx/research/repartition-implementation/ui-debug/ui-repartition-target-plan.png"
+    ],
+    "verification": "Final Release captures reviewed; Debug and Release each passed13 offline UI cases with zero hardware actions."
+  },
+  "commands": [
+    "py tests/run_tests.py --build-app --configuration Debug",
+    "py tests/run_tests.py --build-app --configuration Release",
+    "py -m py_compile build.py tests/native_tests.py tests/run_tests.py tests/ui_smoke.py",
+    "git diff --check"
+  ],
+  "independentReview": "Architect and final read-only reviewer approved; embedded offline candidate gap fixed and regression tested.",
+  "compilerWarnings": "Existing constant-condition guard in FlashOperation and unchanged LZ4/xxhash warnings remain; no compile errors.",
   "limits": [
-    "No connected phone was enumerated, probed, read or flashed.",
-    "No genuine manufacturer-signed positive manifest or physical v4/v5 test was available.",
-    "WinUSB 4/5, unknown dialects/addressing and unmeasured zero-count USERDATA remain unsupported."
+    "No phone was enumerated, probed, read, repartitioned or flashed.",
+    "No genuine manufacturer-signed positive archive-to-device protocol4/5 run was available.",
+    "WinUSB repartition, standalone PIT-only writes, partial-firmware repartition and XML conversion are unsupported.",
+    "Unknown addressing and unmeasured zero-count USERDATA remain rejected.",
+    "IDE entry-point regressions and optional real-firmware suites were not rerun for this feature."
   ]
 }

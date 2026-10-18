@@ -166,7 +166,7 @@ def layout_case(ui,width,height,artifacts):
     bounds=rect(ui.window)
     assert bounds[2]-bounds[0]==width and bounds[3]-bounds[1]==height
     client=W.RECT(); U.GetClientRect(ui.window,C.byref(client))
-    ids=list(range(400,406))+list(range(120,126))+list(range(201,208))+[103,141,142,160,161,162,163,164,165]+list(range(300,306))+list(range(310,316))
+    ids=list(range(400,406))+list(range(120,126))+list(range(201,208))+[103,141,142,143,160,161,162,163,164,165]+list(range(300,306))+list(range(310,316))
     controls={}
     for identifier in ids:
         controls[str(identifier)]=r=rect(ui.control(identifier),ui.window)
@@ -174,6 +174,7 @@ def layout_case(ui,width,height,artifacts):
     for index in range(6):
         path=controls[str(120+index)]; browse=controls[str(300+index)]; clear=controls[str(310+index)]
         assert path[2]<=browse[0] and browse[2]<=clear[0]
+    assert controls['141'][2] <= controls['143'][0] and controls['143'][2] <= controls['142'][0]
     log=controls['164']; status=controls['165']
     assert log[3]<=status[1] and log[3]-log[1]>=60
     screenshot(ui.window,artifacts/f'ui-{width}x{height}.bmp')
@@ -222,6 +223,32 @@ def main():
                 assert text(ui.control(120+i))==retained
                 set_text(ui.control(120+i),'')
             results['cases'].append('six native checked slots retain paths, toggle input state without work; system RichEdit active')
+            assert U.SendMessageW(ui.control(143),0xF0,0,0)==0, 'repartition defaults off'
+            assert not any(U.IsWindowEnabled(ui.control(n)) for n in (126,306,316))
+            retained_pit=str(scratch/'selected.pit');set_text(ui.control(126),retained_pit)
+            set_text(ui.control(125),str(scratch/'reference.tar'))
+            U.SendMessageW(ui.control(143),0xF5,0,0)
+            assert all(U.IsWindowEnabled(ui.control(n)) for n in (126,306,316))
+            assert text(ui.control(405))=='PIT reference' and text(ui.control(125))==str(scratch/'reference.tar')
+            assert text(ui.control(126))==retained_pit and U.SendMessageW(ui.control(141),0x147,0,0)==2
+            assert 'Re-partition selected Clean installation' in ui.log()
+            U.SendMessageW(ui.control(141),0x14E,1,0);ui.click_offline(203)
+            wait_for(lambda:'Re-partition requires Clean installation' in ui.log())
+            assert U.IsWindowEnabled(ui.control(143)) and not U.IsWindowEnabled(ui.control(206))
+            U.SendMessageW(ui.control(141),0x14E,2,0)
+            for i,prefix in enumerate(('BL','AP','CP','CSC')):set_text(ui.control(120+i),str(scratch/(prefix+'.tar')))
+            ui.click_offline(203);wait_for(lambda:'PIT reference is metadata only.' in ui.log())
+            set_text(ui.control(125),'');set_text(ui.control(126),str(scratch/'target.tar'))
+            ui.click_offline(203);wait_for(lambda:'Raw PIT target must be a .pit file.' in ui.log())
+            for i in range(6):set_text(ui.control(120+i),'')
+            set_text(ui.control(126),retained_pit)
+            ui.click_offline(203);wait_for(lambda:'Select all BL / AP / CP / CSC archives' in ui.log())
+            U.SendMessageW(ui.control(143),0xF5,0,0)
+            assert text(ui.control(405))=='PIT reference' and text(ui.control(126))==retained_pit
+            assert not any(U.IsWindowEnabled(ui.control(n)) for n in (126,306,316))
+            U.SendMessageW(ui.control(141),0x14E,0,0)
+            results['cases'].append('separate raw target defaults disabled, retains path, explicitly selects clean policy; preserve/reference/TAR/PIT-only reject before worker')
+
             for i in range(6):ui.toggle(i,False)
             before=ui.log().count('Choose at least one firmware image archive.')
             ui.click_offline(203)
@@ -271,6 +298,7 @@ def main():
             before=ui.log().count('FAILED:')
             ui.click_offline(203); ui.click_offline(206)
             wait_for(lambda:ui.log().count('FAILED:')>before and U.IsWindowEnabled(ui.control(203)))
+            assert U.IsWindowEnabled(ui.control(143))
             assert 'Cancellation requested.' in ui.log()
             assert 'cancel' in text(ui.control(165)).lower()
             cancelled_log=ui.full_log()
@@ -288,6 +316,66 @@ def main():
             ui.toggle(3,True);ui.toggle(4,True);set_text(ui.control(124),'')
             screenshot(ui.window,artifacts/'ui-coloured-offline-log.bmp')
             results['cases'].append('offline verification cancellation drains and restores controls')
+            # Four independent image slots with an explicit candidate; device remains unselected.
+            names=('sboot.bin','boot.img','modem.bin','cache.img')
+            raw=bytearray(28+4*132);struct.pack_into('<II',raw,0,0x12349876,4)
+            for i,name in enumerate(names):
+                offset=28+i*132;struct.pack_into('<9I',raw,offset,0,2,15+i,0,0,1,1024,0,0)
+                partition=('PART'+str(i)).encode();raw[offset+36:offset+36+len(partition)]=partition
+                encoded=name.encode();raw[offset+68:offset+68+len(encoded)]=encoded
+            raw_pit=scratch/'portable-target.pit';raw_pit.write_bytes(raw)
+            packages=[]
+            for i,name in enumerate(names):
+                archive=scratch/('clean-slot-'+str(i)+'.tar');packages.append(archive)
+                with tarfile.open(archive,'w',format=tarfile.USTAR_FORMAT) as tar:
+                    item=tarfile.TarInfo(name);item.size=4;tar.addfile(item,io.BytesIO(b'data'))
+                    if i==3:
+                        embedded_raw=bytearray(raw);struct.pack_into('<I',embedded_raw,28+12,123)
+                        item=tarfile.TarInfo('target.pit');item.size=len(embedded_raw);tar.addfile(item,io.BytesIO(embedded_raw))
+            for i in range(6):ui.toggle(i,True);set_text(ui.control(120+i),'')
+            for i,archive in enumerate(packages):set_text(ui.control(120+i),str(archive))
+            set_text(ui.control(126),str(raw_pit));U.SendMessageW(ui.control(143),0xF5,0,0)
+            previous=ui.log().count('SUCCESS:');ui.click_offline(203)
+            wait_for(lambda:ui.log().count('SUCCESS:')>previous and U.IsWindowEnabled(ui.control(203)))
+            full=ui.full_log();segment=full[full.rfind('--- Offline plan ---'):]
+            assert 'Archive role 8: '+str(raw_pit) in segment and 'Plan: 4 images' in segment
+            assert 'any write: no' in segment and 'PIT write started: no' in segment
+            assert 'Writing selected PIT' not in segment and 'Using matching CSC' not in segment
+            assert 'PIT target: '+str(raw_pit) in segment
+            assert U.SendMessageW(ui.control(103),0x146,0,0)==0
+            results['cases'].append('raw PIT overrides differing valid embedded PIT in clean full four-slot offline plan without device I/O')
+            screenshot(ui.window,artifacts/'ui-repartition-target-plan.bmp')
+            # The embedded candidate is independently usable when the optional raw field is blank.
+            set_text(ui.control(126),'')
+            previous=ui.log().count('SUCCESS:');ui.click_offline(203)
+            wait_for(lambda:ui.log().count('SUCCESS:')>previous and U.IsWindowEnabled(ui.control(203)))
+            segment=ui.full_log()[ui.full_log().rfind('--- Offline plan ---'):]
+            assert 'Plan: 4 images' in segment and 'PIT write started: no' in segment and 'Archive role 8:' not in segment
+            assert 'PIT target: embedded firmware package PIT' in segment
+            results['cases'].append('clean full four-slot offline plan selects embedded PIT when separate raw field is blank')
+            # Embedded candidates must receive the same capacity and stock-route preflight as raw candidates.
+            oversized=scratch/'oversized-bootloader.tar'
+            with tarfile.open(oversized,'w',format=tarfile.USTAR_FORMAT) as tar:
+                item=tarfile.TarInfo(names[0]);item.size=513;tar.addfile(item,io.BytesIO(b'x'*513))
+            for failure in ('capacity','stock-route'):
+                candidate=bytearray(raw)
+                struct.pack_into('<I',candidate,28+(24 if failure=='capacity' else 0),1)
+                rejected=scratch/('rejected-'+failure+'-csc.tar')
+                with tarfile.open(rejected,'w',format=tarfile.USTAR_FORMAT) as tar:
+                    for name,payload in ((names[3],b'data'),('target.pit',bytes(candidate))):
+                        item=tarfile.TarInfo(name);item.size=len(payload);tar.addfile(item,io.BytesIO(payload))
+                set_text(ui.control(120),str(oversized if failure=='capacity' else packages[0]))
+                set_text(ui.control(123),str(rejected))
+                previous=ui.log().count('FAILED:');ui.click_offline(203)
+                wait_for(lambda:ui.log().count('FAILED:')>previous and U.IsWindowEnabled(ui.control(203)))
+                segment=ui.full_log()[ui.full_log().rfind('--- Offline plan ---'):]
+                assert ('exceeds' if failure=='capacity' else 'stock') in segment.lower(), segment
+                assert 'any write: no' in segment and 'PIT write started: no' in segment
+                assert 'Opening selected device' not in segment and 'Connecting to selected device' not in segment
+                assert U.SendMessageW(ui.control(103),0x146,0,0)==0
+                results['cases'].append('embedded repartition offline plan rejects '+failure+' before device connection or PIT write')
+            U.SendMessageW(ui.control(143),0xF5,0,0);U.SendMessageW(ui.control(141),0x14E,0,0)
+            for i in range(6):set_text(ui.control(120+i),'')
             if args.firmware_dir:
                 def firmware(prefix):
                     matches=list(args.firmware_dir.glob(prefix+'*.tar.md5'))

@@ -40,7 +40,13 @@ struct Device {
     uint32_t devinfo_size_override;bool devinfo_short;
     std::deque<uint8_t> incoming;
     std::vector<std::vector<uint32_t> > transcript;
+    bool pit_upload_mode,pit_raw_expected,pit_keep_old;
+    uint32_t pit_starts,pit_uploads,pit_upload_bytes,pit_fault_stage,pit_fault_mode,pit_raw_limit,pit_raw_calls,pit_raw_fragment,pit_readback_size;
+    EJODIN4_Status pit_raw_failure;
+    std::vector<uint8_t> uploaded_pit;
     Device() : devinfo_size_override(0),devinfo_short(false),encoded_packets(false),cancel_encoded_packet(false),negative_data_ack(false),encoded_bytes(0),encoded_written(0),fail_sub(UINT32_MAX),clock(0),total(0),image_bytes(0),data_written(0),protocol(2),packet(1048576),expected(4),packet_index(0),packets(0),commands(0),images(0),sequences(0),finishes(0),closes(0),zero_calls(0),wrong_command(0),fail_command(0),wrong_index(UINT32_MAX),fail_reset(false),optional_mode(0),read_zeroes(0),zero_advance(0),metadata_tail_bytes(0),change_metadata_framing(false),cancelled(false),fragment(true),fail_close(false),fail_write(false),handshake_bad(false),begin_capability(true),zero_cancel(false),pit_short(false),completion_fail(false),pit_size_override(0),data_ack_delay_ms(0),data_ack_ready_at(0),data_ack_budget_ms(0),data_write_budget_ms(0),awaiting_data_ack(false),stock(true),data_ack_bytes(8),handshake_write_fail_after(UINT32_MAX),handshake_read_fail_after(UINT32_MAX),handshake_read_bytes(0),handshake_failure(EJODIN4_TIMEOUT),pit(28+132,0) {
+        pit_upload_mode=pit_raw_expected=pit_keep_old=false;pit_starts=pit_uploads=pit_upload_bytes=pit_raw_calls=0;
+        pit_fault_stage=UINT32_MAX;pit_fault_mode=0;pit_raw_limit=UINT32_MAX;pit_raw_fragment=17;pit_raw_failure=EJODIN4_USB_IO_ERROR;pit_readback_size=0;
         put((&pit[0]),0x12349876);put((&pit[0])+4,1);
         put((&pit[0])+28+8,1); // identifier
         put((&pit[0])+28+24,0x100000);
@@ -54,11 +60,20 @@ struct Device {
     void ack(uint32_t id,uint32_t value=0) {
         uint8_t b[8]={0};put(b,id);put(b+4,value);queue(b,8);
     }
+    void pit_ack(uint32_t stage,uint32_t value=0) {
+        const bool fault=pit_fault_stage==stage;
+        ack(fault&&pit_fault_mode==2?0x66:0x65,fault&&pit_fault_mode==1?UINT32_MAX:fault&&pit_fault_mode==5?7:value);
+        if(fault&&pit_fault_mode==3)for(unsigned i=0;i<5;++i)incoming.pop_back();
+        if(fault&&pit_fault_mode==4)cancelled=true;
+    }
     void received() {
         if(expected==4) {
             check(!std::memcmp((&write_buffer[0]),"ODIN",4),"four byte handshake");
             queue(reinterpret_cast<const uint8_t*>(handshake_bad?"NOPE":"LOKE"),4);
             expected=1024;
+        } else if(pit_raw_expected) {
+            uploaded_pit=write_buffer;pit_raw_expected=false;expected=1024;
+            pit_ack(2);
         } else if(packets) {
             data_packet_sizes.push_back(uint32_t(write_buffer.size()));
             if(encoded_packets){
@@ -87,17 +102,34 @@ struct Device {
             if(cmd==0x66 && sub==2) check(request[2]>0 && request[2]<=30u*1024u*1024u && request[2]%(stock?131072u:packet)==0,"bounded aligned sequence size");
             if(cmd==0x69 && sub==1){
                 uint32_t offset=request[2]*500;check(offset+500<=devinfo.size(),"bounded DEVINFO block index");queue(&devinfo[0]+offset,devinfo_short?499:500);
+            } else if(cmd==0x65 && sub==0) {
+                check(!pit_upload_mode,"PIT upload does not restart");++pit_starts;pit_upload_mode=true;pit_ack(0);
+            } else if(cmd==0x65 && sub==2 && pit_upload_mode) {
+                check(request[2]>0,"PIT upload declares nonzero exact length");pit_upload_bytes=request[2];
+                pit_raw_expected=true;expected=pit_upload_bytes;pit_ack(1);
+            } else if(cmd==0x65 && sub==3 && pit_upload_mode) {
+                check(request[2]==pit_upload_bytes&&uploaded_pit.size()==pit_upload_bytes,"PIT upload final declares original raw length");
+                ++pit_uploads;if(!pit_keep_old){pit=uploaded_pit;if(pit_readback_size)pit.resize(pit_readback_size,0x9d);}pit_upload_mode=false;pit_ack(3);
             } else if(cmd==0x65 && sub==2) {
                 const uint32_t offset=get((&write_buffer[0])+8)*500;
                 check(offset<pit.size(),"PIT block index");
                 const size_t n=std::min<size_t>(500,pit.size()-offset);
                 queue((&pit[0])+offset,pit_short?n-1:n);
+                if(pit_starts&&pit_fault_stage==5){
+                    if(pit_fault_mode==3&&!incoming.empty())incoming.pop_back();
+                    else if(pit_fault_mode==1&&!incoming.empty())incoming.front()^=0xff;
+                    else if(pit_fault_mode==4)cancelled=true;
+                }
                 if(offset+n==pit.size()) {
                     if(optional_mode==1) ack(0x65);
                     else if(optional_mode==2) { uint8_t partial[3]={0x65,0,0};queue(partial,3); }
                     else if(optional_mode==3) ack(0x66);
                     else if(optional_mode==4) ack(0x65,0xfffffffeu);
                 }
+            } else if(cmd==0x65 && sub==1 && pit_starts) {
+                pit_ack(4,pit_size_override?pit_size_override:uint32_t(pit.size()));
+            } else if(cmd==0x65 && sub==3 && pit_starts) {
+                pit_ack(6);
             } else {
                 uint32_t value=0;
                 if(cmd==0x64 && sub==0) value=(protocol<<16)|(begin_capability?(stock?0x8000u:0x80000000u):0);
@@ -142,6 +174,13 @@ struct Device {
             for(uint32_t i=0;i<actual;++i){p[i]=incoming.front();incoming.pop_front();}
             if(incoming.empty())awaiting_data_ack=false;
         } else {
+            if(pit_raw_expected){
+                ++pit_raw_calls;
+                if(write_buffer.size()>=pit_raw_limit){error="injected raw PIT terminal transfer";return pit_raw_failure;}
+                actual=std::min<uint32_t>(n,expected-uint32_t(write_buffer.size()));
+                actual=std::min(actual,pit_raw_fragment);actual=std::min(actual,pit_raw_limit-uint32_t(write_buffer.size()));
+                write_buffer.insert(write_buffer.end(),p,p+actual);if(write_buffer.size()==expected)received();return EJODIN4_OK;
+            }
             if(write_buffer.empty()){
                 if(expected==packet)data_write_budget_ms=until-clock;
                 else control_budgets.push_back(until-clock);
@@ -237,7 +276,7 @@ struct Fixture {
     std::string error;
     std::vector<EJODIN4_PitEntry> pit;
     explicit Fixture(bool usb=false,uint32_t timeout_override=0):p(usb),c(p,make_cancel(&p.d)),s(c,SessionProgress(),timeout_override){}
-    EJODIN4_Status begin(uint64_t total=0,const FirmwareIdentity* identity=0){EJODIN4_Status r=c.open("bound-interface",16,30000,error);return r==EJODIN4_OK?s.begin(pit,error,total,identity):r;}
+    EJODIN4_Status begin(uint64_t total=0,const FirmwareIdentity* identity=0,const std::vector<uint8_t>* target=0){EJODIN4_Status r=c.open("bound-interface",16,30000,error);return r==EJODIN4_OK?s.begin(pit,error,total,identity,target):r;}
     PlanImage image(uint64_t n,bool large=false) {PlanImage i;i.decoded_bytes=n;i.route.identifier=1;i.route.device_type=2;i.large_partition=large;p.d.image_bytes=n;return i;}
 };
 
@@ -280,6 +319,70 @@ void happy(uint64_t bytes,bool modern,bool usb,bool extra,bool large,bool metada
 typedef std::vector<std::vector<uint32_t> > Rows;
 std::vector<uint32_t> row(uint32_t a,uint32_t b,uint32_t c=0,uint32_t d=0,uint32_t e=0,uint32_t f=0,uint32_t g=0,uint32_t h=0,uint32_t i=0,uint32_t j=0){const uint32_t values[]={a,b,c,d,e,f,g,h,i,j};return std::vector<uint32_t>(values,values+10);}
 template<size_t N> Rows rows(const uint32_t (&values)[N][10]){Rows result;for(size_t i=0;i<N;++i)result.push_back(std::vector<uint32_t>(values[i],values[i]+10));return result;}
+void repartition_session_tests(){
+    FirmwareIdentity identity;identity.present=true;identity.model="SM-TEST_BUILD";
+    for(uint32_t version=1;version<=5;++version){
+        Fixture f;f.p.d.protocol=version;f.p.d.packet=version==1?131072:1048576;
+        std::vector<uint8_t> candidate=f.p.d.pit;put(&candidate[0]+28+4,2);put(&candidate[0]+28+8,2);put(&candidate[0]+28+24,16);candidate.resize(663,0xc7);
+        const std::vector<uint8_t> old=f.p.d.pit;f.p.d.pit_raw_fragment=version==1?1:37;
+        check(f.begin(513,&identity,&candidate)==EJODIN4_OK,"repartition accepts changed candidate on each reviewed stock version");
+        check(old!=candidate&&f.p.d.uploaded_pit==candidate&&f.p.d.pit_starts==1&&f.p.d.pit_uploads==1,"one exact unpadded PIT upload independent from old layout");
+        Rows expected;expected.push_back(row(0x64,0,5));if(version>1)expected.push_back(row(0x64,5,1048576));expected.push_back(row(0x64,2,513));
+        if(version>=4){expected.push_back(row(0x69,0));expected.push_back(row(0x69,1));expected.push_back(row(0x69,2));}
+        expected.push_back(row(0x65,0));expected.push_back(row(0x65,2,663));expected.push_back(row(0x65,3,663));
+        expected.push_back(row(0x65,1));expected.push_back(row(0x65,2,0));expected.push_back(row(0x65,2,1));expected.push_back(row(0x65,3));
+        check(f.p.d.transcript==expected,"independent golden PIT upload and readback transcript");
+        check(f.s.state().any_write&&f.s.state().pit_write_started&&f.s.state().pit_uploaded&&f.s.state().pit_verified,"PIT provenance follows independent acknowledgements and readback");
+        check(!f.s.state().images_completed&&!f.s.state().acknowledged_bytes&&f.s.pit_bytes()==candidate&&f.pit[0].identifier==2,"PIT transfer never credits firmware bytes or image completion");
+        PlanImage image=f.image(513);image.route=f.pit[0];Reader reader(513);
+        check(f.s.send_image(image,reader,f.error)==EJODIN4_OK&&f.s.finish(false,f.error)==EJODIN4_OK,"image and checked finalize follow verified new layout");
+    }
+    const unsigned ack_stages[]={0,1,2,3,4,6};
+    for(size_t k=0;k<sizeof(ack_stages)/sizeof(ack_stages[0]);++k)for(unsigned mode=1;mode<=4;++mode){
+        Fixture f;std::vector<uint8_t> candidate=f.p.d.pit;f.p.d.pit_fault_stage=ack_stages[k];f.p.d.pit_fault_mode=mode;
+        EJODIN4_Status status=f.begin(513,&identity,&candidate);
+        check(status==(mode==3?EJODIN4_TIMEOUT:mode==4?EJODIN4_CANCELLED:EJODIN4_INVALID_RESPONSE),"every PIT ACK rejects negative, foreign, partial and cancelled reply");
+        check(f.s.state().any_write&&f.s.state().pit_write_started&&!f.s.state().pit_verified,"PIT failure preserves possible side effect without readback proof");
+        check(f.s.state().pit_uploaded==(ack_stages[k]>=4),"upload proof requires successful final upload ACK");
+        const uint32_t commands=f.p.d.commands;PlanImage image=f.image(513);Reader reader(513);
+        check(f.s.send_image(image,reader,f.error)!=EJODIN4_OK&&f.s.finish(true,f.error)!=EJODIN4_OK&&commands==f.p.d.commands,"PIT ACK failure sends no image, next command, finalize or reboot");
+        check(!f.p.d.images&&!f.p.d.finishes&&!f.s.state().acknowledged_bytes&&!f.s.state().images_completed,"PIT ACK failures retain zero image counters");
+        const uint32_t last_sub=f.p.d.transcript.back()[1];check(last_sub==(ack_stages[k]==0?0:ack_stages[k]<=2?2:ack_stages[k]==4?1:3),"failed stage is final transmitted control");
+    }
+    for(unsigned stage=0;stage<=3;++stage){Fixture f;std::vector<uint8_t> candidate=f.p.d.pit;f.p.d.pit_fault_stage=stage;f.p.d.pit_fault_mode=5;
+        check(f.begin(513,&identity,&candidate)==EJODIN4_OK,"positive nonzero PIT upload ACK remains valid");check(f.s.state().pit_verified,"positive PIT upload ACK still requires full readback");}
+    const uint32_t limits[]={0,1,79,159};
+    for(size_t k=0;k<sizeof(limits)/sizeof(limits[0]);++k)for(unsigned mode=0;mode<3;++mode){Fixture f;std::vector<uint8_t> candidate=f.p.d.pit;
+        f.p.d.pit_raw_limit=limits[k];f.p.d.pit_raw_failure=mode==0?EJODIN4_USB_IO_ERROR:mode==1?EJODIN4_TIMEOUT:EJODIN4_CANCELLED;
+        check(f.begin(513,&identity,&candidate)==f.p.d.pit_raw_failure,"short raw PIT transfer preserves terminal error");
+        check(f.p.d.write_buffer.size()==limits[k]&&f.p.d.pit_starts==1&&!f.p.d.pit_uploads&&!f.s.state().pit_uploaded&&!f.s.state().pit_verified&&f.s.state().any_write,"short PIT write retains exact prefix and conservative side effect");
+        check(f.p.d.transcript.back()==row(0x65,2,160)&&f.p.d.uploaded_pit.empty(),"short raw PIT never emits upload final or retries");
+        unsigned commands=f.p.d.commands;check(f.s.finish(true,f.error)!=EJODIN4_OK&&commands==f.p.d.commands,"short PIT write failure blocks finalize");}
+    for(unsigned mode=0;mode<4;++mode){Fixture f;std::vector<uint8_t> candidate=f.p.d.pit;put(&candidate[0]+28+8,2);
+        if(mode==0)f.p.d.pit_keep_old=true;else{f.p.d.pit_fault_stage=5;f.p.d.pit_fault_mode=mode==1?3:mode==2?4:1;}
+        check(f.begin(513,&identity,&candidate)!=EJODIN4_OK,"mismatched, short, cancelled or malformed PIT readback rejects");
+        check(f.s.state().pit_uploaded&&!f.s.state().pit_verified&&f.s.state().any_write&&!f.p.d.images&&!f.p.d.finishes,"failed readback retains upload proof and zero images");
+        const unsigned commands=f.p.d.commands;check(f.s.finish(true,f.error)!=EJODIN4_OK&&commands==f.p.d.commands,"failed PIT readback cannot finalize or reboot");}
+    for(unsigned mode=0;mode<5;++mode){Fixture f(mode==0);std::vector<uint8_t> candidate=f.p.d.pit;const FirmwareIdentity* context=&identity;uint64_t total=513;
+        if(mode==1)candidate[0]=0;if(mode==2)candidate.clear();if(mode==3)context=0;if(mode==4)total=0;
+        check(f.begin(total,context,&candidate)!=EJODIN4_OK,"invalid repartition context is rejected before handshake");
+        check(f.p.d.expected==4&&!f.p.d.commands&&!f.p.d.pit_starts&&!f.s.state().any_write,"invalid candidate, transport, identity context or total has zero protocol I/O");}
+    for(uint32_t version=4;version<=5;++version){Fixture f;f.p.d.protocol=version;FirmwareIdentity missing;std::vector<uint8_t> candidate=f.p.d.pit;
+        check(f.begin(513,&missing,&candidate)!=EJODIN4_OK&&!f.p.d.pit_starts&&!f.s.state().any_write,"protocol4/5 missing authenticated identity precedes PIT upload");
+        for(size_t k=0;k<f.p.d.transcript.size();++k)check(f.p.d.transcript[k][0]!=0x65,"missing identity never emits a PIT command");}
+    for(unsigned mode=0;mode<2;++mode){Fixture f;std::vector<uint8_t> candidate=f.p.d.pit;if(mode==0)candidate.resize(663,0x93);f.p.d.pit_readback_size=mode==0?160:663;
+        check(f.begin(513,&identity,&candidate)==EJODIN4_OK&&f.s.state().pit_verified,"PIT readback equality ignores different raw padding lengths and values");
+        check(f.p.d.uploaded_pit==candidate&&f.s.pit_bytes().size()==f.p.d.pit_readback_size,"candidate wire bytes and actual readback evidence stay exact");}
+    for(unsigned mode=1;mode<=4;++mode){Fixture f;std::vector<uint8_t> candidate=f.p.d.pit;f.p.d.optional_mode=mode;
+        const EJODIN4_Status status=f.begin(513,&identity,&candidate);
+        check((status==EJODIN4_OK)==(mode==1),"optional postupload PIT frame retains strict normal download semantics");
+        check(f.s.state().pit_uploaded&&f.s.state().pit_verified==(mode==1),"optional PIT frame failure cannot manufacture verified proof");
+        if(mode!=1){const unsigned commands=f.p.d.commands;check(f.s.finish(true,f.error)!=EJODIN4_OK&&commands==f.p.d.commands&&f.p.d.transcript.back()==row(0x65,2),"failed optional PIT frame stops before download final and reboot");}}
+    {Fixture f;f.p.d.protocol=3;std::vector<uint8_t> candidate=f.p.d.pit;put(&candidate[0]+28+4,2);
+        check(f.begin(513,&identity,&candidate)==EJODIN4_OK&&f.s.state().pit_verified&&f.s.compression_supported(),"repartition retains negotiated compression only after verified PIT");
+        PlanImage image=f.image(513);image.route=f.pit[0];Reader raw(513);raw.fail=true;EncodedReader encoded(513);
+        check(f.s.send_image(image,raw,f.error,&encoded)==EJODIN4_OK&&f.s.state().acknowledged_bytes==513&&f.s.state().images_completed==1&&f.s.finish(false,f.error)==EJODIN4_OK,"encoded image and checked finalize follow verified repartition without raw fallback");}
+}
 void stock_raw_golden() {
     struct TotalVector { uint64_t total; uint32_t remainder,quotient; }; const TotalVector totals[]={
         {UINT64_C(4294967295),0,1},{UINT64_C(4294967296),1,1},
@@ -500,13 +603,92 @@ static void append_package(Bytes& tar,const char* name,const Bytes& data){
 struct TempArchive {
     std::vector<std::string> files;
     ~TempArchive(){for(size_t i=0;i<files.size();++i)DeleteFileA(files[i].c_str());}
-    std::string write(Bytes data){
-        data.resize(data.size()+1024,0);char folder[MAX_PATH+1]={0},name[MAX_PATH+1]={0};
+    std::string write(Bytes data,bool archive=true){
+        if(archive)data.resize(data.size()+1024,0);char folder[MAX_PATH+1]={0},name[MAX_PATH+1]={0};
         check(GetTempPathA(MAX_PATH,folder)!=0&&GetTempFileNameA(folder,"obc",0,name)!=0,"temporary TAR path");
         HANDLE file=CreateFileA(name,GENERIC_WRITE,0,0,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,0);check(file!=INVALID_HANDLE_VALUE,"open temporary TAR");
-        DWORD actual=0;BOOL ok=WriteFile(file,&data[0],DWORD(data.size()),&actual,0);CloseHandle(file);files.push_back(name);check(ok&&actual==data.size(),"write temporary TAR");return name;
+        DWORD actual=0;BOOL ok=WriteFile(file,data.empty()?0:&data[0],DWORD(data.size()),&actual,0);CloseHandle(file);files.push_back(name);check(ok&&actual==data.size(),"write temporary TAR/raw PIT");return name;
     }
 };
+struct RepartitionEvents {
+    const EJODIN4_FlashResult* result;Device* device;bool cancelled;uint32_t cancel_phase;std::vector<uint32_t> phases;
+    RepartitionEvents():result(0),device(0),cancelled(false),cancel_phase(0){}
+};
+int32_t EJODIN4_CALL repartition_cancel(void* context){return static_cast<RepartitionEvents*>(context)->cancelled?1:0;}
+void EJODIN4_CALL repartition_progress(const EJODIN4_FlashProgress* event,void* context){
+    RepartitionEvents& events=*static_cast<RepartitionEvents*>(context);events.phases.push_back(event->phase);
+    const uint32_t flags=events.result->flags;
+    if(flags&EJODIN4_FLASH_PIT_VERIFIED)check((flags&(EJODIN4_FLASH_PIT_UPLOADED|EJODIN4_FLASH_PIT_WRITE_STARTED|EJODIN4_FLASH_ANY_WRITE))==(EJODIN4_FLASH_PIT_UPLOADED|EJODIN4_FLASH_PIT_WRITE_STARTED|EJODIN4_FLASH_ANY_WRITE),"verified PIT always implies uploaded, started and possible write");
+    if(flags&EJODIN4_FLASH_PIT_UPLOADED)check((flags&(EJODIN4_FLASH_PIT_WRITE_STARTED|EJODIN4_FLASH_ANY_WRITE))==(EJODIN4_FLASH_PIT_WRITE_STARTED|EJODIN4_FLASH_ANY_WRITE),"uploaded PIT always implies started and possible write");
+    if(flags&EJODIN4_FLASH_PIT_WRITE_STARTED)check((flags&EJODIN4_FLASH_ANY_WRITE)!=0,"started PIT always implies possible write");
+    if(event->phase==EJODIN4_PHASE_IMAGE_BEGIN){check((flags&EJODIN4_FLASH_PIT_VERIFIED)!=0,"no image begins before verified candidate readback");events.device->image_bytes=event->image_bytes;events.device->data_written=0;}
+    if(event->phase==events.cancel_phase)events.cancelled=true;
+}
+void composed_repartition_tests(){
+    const uint32_t proof=EJODIN4_FLASH_PIT_WRITE_STARTED|EJODIN4_FLASH_PIT_UPLOADED|EJODIN4_FLASH_PIT_VERIFIED;
+    for(unsigned mode=0;mode<41;++mode){
+        TempArchive temp;FakePlatform platform(mode==14);Bytes candidate(28+4*132,0);put(&candidate[0],0x12349876);put(&candidate[0]+4,4);
+        const char* parts[]={"BOOT","SYSTEM","MODEM","CACHE"};const char* names[]={"boot.img","system.img","modem.bin","cache.img"};
+        for(unsigned i=0;i<4;++i){uint8_t* entry=&candidate[0]+28+132*i;put(entry+4,2);put(entry+8,i+1);put(entry+24,mode==12||mode==27?1:16);std::strcpy(reinterpret_cast<char*>(entry+36),parts[i]);std::strcpy(reinterpret_cast<char*>(entry+68),names[i]);}
+        if(mode==13||mode==28)put(&candidate[0]+28+132*3,1);
+        std::string paths[5];EJODIN4_FirmwareFile files[5];
+        const bool raw_target=mode==1||mode==2||(mode>=17&&mode<=25);
+        for(unsigned i=0;i<4;++i){Bytes package;append_package(package,names[i],Bytes((mode==12||mode==27)&&i==1?513:1,0x5a));
+            if(i==3){Bytes embedded=candidate;if(raw_target)put(&embedded[0]+28+12,0x55);append_package(package,"new-layout.pit",embedded);}
+            paths[i]=temp.write(package);files[i].role=i+1;files[i].path=paths[i].c_str();files[i].path_bytes=uint32_t(paths[i].size()+1);}
+        if(raw_target){paths[4]=temp.write(candidate,false);files[4].role=EJODIN4_PACKAGE_PIT_TARGET;files[4].path=paths[4].c_str();files[4].path_bytes=uint32_t(paths[4].size()+1);}
+        EJODIN4_FlashRequest request=read_pit_request();request.operation=EJODIN4_FLASH_REPARTITION;request.files=files;request.file_count=raw_target?5:4;request.data_policy=EJODIN4_CLEAN_INSTALL;request.decoded_limit=1048576;request.logical_sector_bytes=mode==2?4096:512;
+        if(mode==2)platform.d.pit_keep_old=true;
+        if(mode==3){platform.d.pit_fault_stage=0;platform.d.pit_fault_mode=1;}
+        if(mode==4){platform.d.pit_fault_stage=1;platform.d.pit_fault_mode=2;}
+        if(mode==5)platform.d.pit_raw_limit=79;
+        if(mode==6){platform.d.pit_fault_stage=2;platform.d.pit_fault_mode=2;}
+        if(mode==7){platform.d.pit_fault_stage=3;platform.d.pit_fault_mode=3;}
+        if(mode==8){platform.d.pit_fault_stage=6;platform.d.pit_fault_mode=1;}
+        if(mode==15||mode==16)platform.d.protocol=mode==15?4:5;
+        if(mode==17){request.operation=EJODIN4_FLASH_PLAN_ONLY;request.device_path=0;request.device_path_bytes=0;}
+        if(mode==18)request.operation=EJODIN4_FLASH_WRITE;
+        if(mode==19)request.operation=EJODIN4_FLASH_READ_PIT;
+        if(mode==20)request.file_count=3;
+        if(mode==21)request.data_policy=EJODIN4_PRESERVE_DATA;
+        if(mode==22)files[3].role=EJODIN4_PACKAGE_HOME_CSC;
+        if(mode==23)files[3].role=EJODIN4_PACKAGE_PIT_REFERENCE;
+        if(mode==24)files[3].role=EJODIN4_PACKAGE_PIT_TARGET;
+        if(mode==25)request.flags=2;
+        if(mode>=26){request.operation=EJODIN4_FLASH_PLAN_ONLY;request.device_path=0;request.device_path_bytes=0;request.flags=EJODIN4_FLASH_PLAN_REPARTITION;}
+        if(mode==29)request.flags|=EJODIN4_FLASH_REBOOT;
+        if(mode>=30&&mode<=32){request.operation=mode==30?EJODIN4_FLASH_WRITE:mode==31?EJODIN4_FLASH_READ_PIT:EJODIN4_FLASH_REPARTITION;request.device_path="bound-interface";request.device_path_bytes=16;}
+        if(mode==33)request.data_policy=EJODIN4_PRESERVE_DATA;
+        if(mode==34)request.data_policy=EJODIN4_UPDATE_SELECTED;
+        if(mode==35)request.file_count=3;
+        if(mode==36)files[3].role=EJODIN4_PACKAGE_HOME_CSC;
+        if(mode==37)files[3].role=EJODIN4_PACKAGE_PIT_REFERENCE;
+        if(mode==38){request.device_path="bound-interface";request.device_path_bytes=16;}
+        if(mode==39)request.flags|=8;
+        if(mode==40)request.flags|=2;
+        EJODIN4_FlashResult result;std::memset(&result,0,sizeof(result));char diagnostic[1024]={0};RepartitionEvents events;events.result=&result;events.device=&platform.d;
+        events.cancel_phase=mode==9?EJODIN4_PHASE_PIT_UPLOAD_BEGIN:mode==10?EJODIN4_PHASE_PIT_UPLOAD_COMPLETE:mode==11?EJODIN4_PHASE_PIT_VERIFIED:0;
+        const EJODIN4_Status status=flash_with_platform(platform,&request,&result,repartition_progress,repartition_cancel,&events,diagnostic,sizeof(diagnostic));
+        if(mode==0||mode==1){if(status!=EJODIN4_OK)std::fprintf(stderr,"repartition mode=%u status=%u diagnostic=%s\n",mode,unsigned(status),diagnostic);
+            check(status==EJODIN4_OK&&result.phase==EJODIN4_PHASE_COMPLETE,"full CLEAN repartition completes from embedded or explicit raw candidate");
+            check(platform.d.uploaded_pit==candidate&&platform.d.pit_starts==1&&platform.d.pit_uploads==1&&(result.flags&proof)==proof,"successful operation exposes all independent PIT proofs");
+            check(result.images_completed==4&&result.image_count==4&&result.total_bytes==4&&result.acknowledged_bytes==4&&platform.d.images==4,"repartition firmware accounting excludes raw PIT bytes");
+            check(std::find(events.phases.begin(),events.phases.end(),EJODIN4_PHASE_PIT_UPLOAD_BEGIN)!=events.phases.end()&&std::find(events.phases.begin(),events.phases.end(),EJODIN4_PHASE_PIT_UPLOAD_COMPLETE)!=events.phases.end()&&std::find(events.phases.begin(),events.phases.end(),EJODIN4_PHASE_PIT_VERIFIED)!=events.phases.end(),"repartition reports upload begin, upload completion and verified readback phases");
+        }else if(mode==17||mode==26){check(status==EJODIN4_OK&&result.image_count==4&&!platform.d.commands&&platform.d.expected==4&&!(result.flags&(proof|EJODIN4_FLASH_ANY_WRITE)),"CLEAN raw or explicitly marked embedded repartition plan validates candidate without protocol I/O or PIT side effects");}
+        else if((mode>=18&&mode<=25)||mode>=29){check(status==EJODIN4_INVALID_ARGUMENT&&!platform.d.commands&&!platform.d.pit_starts,"target operation, offline marker, full CLEAN roles, duplicate target and removed flag constraints reject before I/O");}
+        else {
+            if(status==EJODIN4_OK)std::fprintf(stderr,"unexpected repartition success mode=%u\n",mode);
+            check(status!=EJODIN4_OK&&!platform.d.images&&!platform.d.finishes&&!result.images_completed&&!result.acknowledged_bytes,"repartition failure emits no firmware data, finalize or reboot");
+            if(mode==9||mode==12||mode==13||mode==14||mode==15||mode==16||mode==27||mode==28){check(!(result.flags&(proof|EJODIN4_FLASH_ANY_WRITE))&&!platform.d.pit_starts,"preupload rejection or cancellation has no PIT side effect");}
+            else check((result.flags&(EJODIN4_FLASH_PIT_WRITE_STARTED|EJODIN4_FLASH_ANY_WRITE))==(EJODIN4_FLASH_PIT_WRITE_STARTED|EJODIN4_FLASH_ANY_WRITE),"poststart failure retains possible PIT mutation even with zero images");
+            if(mode==2||mode==8||mode==10||mode==11)check((result.flags&EJODIN4_FLASH_PIT_UPLOADED)!=0,"readback and later cancellation retain final upload ACK proof");
+            if(mode==2)check(status==EJODIN4_PIT_MAPPING_ERROR&&!(result.flags&EJODIN4_FLASH_PIT_VERIFIED),"explicit allocation units cannot bypass mismatched candidate readback");
+            if(mode==12||mode==13||mode==14||mode==27||mode==28)check(!platform.d.commands&&platform.d.expected==4,"candidate capacity, unsupported later route and WinUSB reject before protocol commands");
+            if(mode==27)check(status==EJODIN4_PIT_MAPPING_ERROR,"embedded repartition offline marker enforces candidate image capacity");
+            if(mode==28)check(status==EJODIN4_DRIVER_UNSUPPORTED,"embedded repartition offline marker enforces every stock route before connecting");
+        }
+    }
+}
 void composed_route_guard_tests(){
     TempArchive temp;FakePlatform platform;
     platform.d.pit.resize(28+2*132,0);put(&platform.d.pit[0]+4,2);put(&platform.d.pit[0]+28+4,2);
@@ -626,7 +808,7 @@ void integrated_operation_tests(){
 }
 int main() {
     try {
-        native_devinfo_versions();stock_encoded_tests();stock_raw_golden();handshake_diagnostics();stock_versions_and_routes();
+        repartition_session_tests();composed_repartition_tests();native_devinfo_versions();stock_encoded_tests();stock_raw_golden();handshake_diagnostics();stock_versions_and_routes();
         happy(513,true,false,false,false);
         happy(513,false,false,true,true);
         happy(30u*1024u*1024u+513u,true,false,false,true);

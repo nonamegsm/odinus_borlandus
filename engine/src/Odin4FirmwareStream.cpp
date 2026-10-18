@@ -280,7 +280,7 @@ EJODIN4_Status FirmwareSet::validate_device_pit(const std::vector<EJODIN4_PitEnt
 }
 
 EJODIN4_Status prepare_firmware_set(const EJODIN4_FirmwareFile* files,uint32_t count,uint32_t policy,uint64_t limit,
-    const Cancellation& cancel,std::unique_ptr<FirmwareSet>& output,std::string& error,const VerificationCallback& progress){
+    const Cancellation& cancel,std::unique_ptr<FirmwareSet>& output,std::string& error,const VerificationCallback& progress,const std::vector<uint8_t>* target_pit){
     try{
         const bool selected=policy==EJODIN4_UPDATE_SELECTED;
         if(!files||count<(selected?1u:4u)||count>6||(policy!=EJODIN4_PRESERVE_DATA&&policy!=EJODIN4_CLEAN_INSTALL&&!selected)||!limit||limit>(uint64_t(1)<<40))return bad(error,"Invalid firmware set or explicit data policy",EJODIN4_INVALID_ARGUMENT);
@@ -293,7 +293,9 @@ EJODIN4_Status prepare_firmware_set(const EJODIN4_FirmwareFile* files,uint32_t c
         const uint32_t chosen=policy==EJODIN4_PRESERVE_DATA&&roles.count(EJODIN4_PACKAGE_HOME_CSC)?EJODIN4_PACKAGE_HOME_CSC:EJODIN4_PACKAGE_CSC;
         if(policy==EJODIN4_PRESERVE_DATA&&chosen==EJODIN4_PACKAGE_CSC&&!roles.count(EJODIN4_PACKAGE_USERDATA))return bad(error,"Preserve with CSC requires a selected USERDATA archive and its download list",EJODIN4_INVALID_ARGUMENT);
         if(!selected&&(!roles.count(1)||!roles.count(2)||!roles.count(3)||!roles.count(chosen)))return bad(error,"BL, AP, CP and the policy-selected CSC variant are required",EJODIN4_INVALID_ARGUMENT);
+        if(target_pit&&(policy!=EJODIN4_CLEAN_INSTALL||target_pit->empty()||target_pit->size()>1048576u))return bad(error,"Target PIT override requires a bounded clean-install candidate",EJODIN4_INVALID_ARGUMENT);
         std::unique_ptr<FirmwareSet> set(new FirmwareSet);set->data_policy=policy;
+        if(target_pit)set->package_pit_bytes=*target_pit;
         std::vector<PlanImage> candidates;
         uint64_t validated_total=0;bcc::Array<uint8_t,65536> buffer;
         std::string selected_download_list; bool download_list_found=false;
@@ -333,9 +335,12 @@ EJODIN4_Status prepare_firmware_set(const EJODIN4_FirmwareFile* files,uint32_t c
                     selected_download_list=member_download_list;download_list_found=true;
                 }
                 if(is_pit){
-                    if(!set->package_pit_bytes.empty()&&set->package_pit_bytes!=pit)return bad(error,"Conflicting package PIT members");
+                    if(target_pit){
+                        std::vector<EJODIN4_PitEntry> validated(512);uint32_t n=0;char text[256]={0};
+                        if(pit.empty()||EJODIN4_ParsePit(&pit[0],uint32_t(pit.size()),&validated[0],512,&n,text,sizeof(text))!=EJODIN4_OK)return bad(error,"Embedded PIT failed validation under explicit target override",EJODIN4_INVALID_PIT);
+                    }else if(!set->package_pit_bytes.empty()&&set->package_pit_bytes!=pit)return bad(error,"Conflicting package PIT members");
                     report_member(reporter,work,*reader,entry.data_bytes,true);if(cancel.requested())return bad(error,"Firmware preflight cancelled",EJODIN4_CANCELLED);
-                    set->package_pit_bytes=pit;set->skips.push_back(PlanSkip(image.role,EJODIN4_SKIP_PIT,image.name));continue;
+                    if(!target_pit)set->package_pit_bytes=pit;set->skips.push_back(PlanSkip(image.role,EJODIN4_SKIP_PIT,image.name));continue;
                 }
                 if(metadata(image.name)){report_member(reporter,work,*reader,entry.data_bytes,true);if(cancel.requested())return bad(error,"Firmware preflight cancelled",EJODIN4_CANCELLED);set->skips.push_back(PlanSkip(image.role,EJODIN4_SKIP_METADATA,image.name));continue;}
                 status=geometry.finish(image.decoded_bytes,image.expanded_bytes,error);if(status!=EJODIN4_OK)return status;

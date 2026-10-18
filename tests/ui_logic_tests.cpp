@@ -8,6 +8,7 @@ static EJODIN4_FlashResult finalized(){EJODIN4_FlashResult r;std::memset(&r,0,si
 static OdinUi::ProgressState context(){OdinUi::ProgressState s;s.reboot=true;s.packageCount=4;s.roleMask=(1u<<1)|(1u<<2)|(1u<<3)|(1u<<5);s.rebootPending=true;s.acknowledged=11882352976ULL;return s;}
 static bool warning(const EJODIN4_FlashResult& r,const OdinUi::ProgressState& s,EJODIN4_Status status=EJODIN4_USB_IO_ERROR,bool cancel=false){OdinUi::Completion c=OdinUi::completion(r,status,EJODIN4_FLASH_WRITE,true,cancel,s);return c.valid&&c.success&&c.rebootWarning;}
 static EJODIN4_FlashProgress image(){EJODIN4_FlashProgress p;std::memset(&p,0,sizeof(p));p.struct_size=sizeof(p);p.phase=EJODIN4_PHASE_IMAGE_BEGIN;p.image_count=26;p.image_index=19;p.package_role=2;p.total_bytes=100;p.image_bytes=60;std::strcpy(p.image_name,"vbmeta.img");return p;}
+static EJODIN4_FlashProgress pitProgress(uint32_t phase){EJODIN4_FlashProgress p;std::memset(&p,0,sizeof(p));p.struct_size=sizeof(p);p.phase=phase;p.image_count=4;p.total_bytes=100;return p;}
 int main(){
     EJODIN4_FlashResult r=finalized();OdinUi::ProgressState s=context();
     check(warning(r,s),"only finalized full transfer with serial reboot disconnect is successful warning");
@@ -60,7 +61,7 @@ int main(){
     bad=r;bad.last_proven_phase=EJODIN4_PHASE_FINALIZING;check(!warning(bad,s),"finalize failure is not reboot failure");
     bad=r;bad.last_response_id=0x66;check(!warning(bad,s),"requires proven accepted finalization response");
     bad=r;bad.last_ack=1;check(!warning(bad,s),"device NACK never warning success");
-    bad=r;bad.flags|=64;check(!warning(bad,s),"unknown result flags rejected");
+    bad=r;bad.flags|=512;check(!warning(bad,s),"unknown result flags rejected");
     bad=r;bad.logical_sector_bytes=123;check(!warning(bad,s),"unknown geometry rejected");
     r.phase=EJODIN4_PHASE_COMPLETE;r.flags|=EJODIN4_FLASH_REBOOT_SENT;
     OdinUi::Completion c=OdinUi::completion(r,EJODIN4_OK,EJODIN4_FLASH_WRITE,true,false,s);
@@ -94,5 +95,81 @@ int main(){
     check(OdinUi::tone(L"SUCCESS: Flash completed successfully.")==OdinUi::Good,"success green");
     check(OdinUi::tone(L"Policy: preserve data")==OdinUi::Configuration,"configuration distinct colour");
     check(OdinUi::tone(L"literal 100% %s %n <b> & text")==OdinUi::Plain,"literal text has no markup or format interpretation");
+    const uint32_t full=(1u<<1)|(1u<<2)|(1u<<3)|(1u<<4);
+    check(OdinUi::repartitionSelection(EJODIN4_CLEAN_INSTALL,full),"embedded target permits clean full image selection");
+    check(OdinUi::repartitionSelection(EJODIN4_CLEAN_INSTALL,full|(1u<<6)|(1u<<8)),"raw target permits optional USERDATA with clean full images");
+    for(unsigned role=1;role<=4;++role)check(!OdinUi::repartitionSelection(EJODIN4_CLEAN_INSTALL,full&~(1u<<role)),"each BL AP CP CSC slot required for repartition");
+    check(!OdinUi::repartitionSelection(EJODIN4_PRESERVE_DATA,full)&&!OdinUi::repartitionSelection(EJODIN4_UPDATE_SELECTED,full),"repartition never uses preserve or selected-update policy");
+    check(!OdinUi::repartitionSelection(EJODIN4_CLEAN_INSTALL,full|(1u<<7))&&!OdinUi::repartitionSelection(EJODIN4_CLEAN_INSTALL,full|(1u<<5)),"reference and HOME_CSC cannot authorize repartition");
+    check(OdinUi::rawPitName("C:/firmware/device.PIT")&&!OdinUi::rawPitName("device.pit.tar")&&!OdinUi::rawPitName(".xml")&&!OdinUi::rawPitName(""),"raw target accepts only explicit PIT extension");
+    for(unsigned phase=18;phase<=24;++phase){
+        s=OdinUi::ProgressState();p=pitProgress(phase);
+        check(!s.observe(&p),"ordinary operation rejects repartition and malformed verification phases");
+    }
+    s=OdinUi::ProgressState();s.operation=EJODIN4_FLASH_REPARTITION;
+    p=pitProgress(18);check(s.observe(&p)&&s.pitStage==1,"PIT upload intent starts ordered proof");
+    p.phase=19;check(s.observe(&p)&&s.pitStage==2,"PIT upload complete follows intent");
+    p.phase=22;check(s.observe(&p)&&s.pitStage==3,"PIT readback proof follows upload");
+    s.roleMask=1u<<2;p=image();check(s.observe(&p),"firmware begins only after PIT readback proof");
+    s=OdinUi::ProgressState();s.operation=EJODIN4_FLASH_REPARTITION;s.roleMask=1u<<2;p=image();check(!s.observe(&p),"image before PIT proof rejected");
+    s=OdinUi::ProgressState();s.operation=EJODIN4_FLASH_REPARTITION;p=pitProgress(19);check(!s.observe(&p),"PIT upload cannot skip intent");
+    s=OdinUi::ProgressState();s.operation=EJODIN4_FLASH_REPARTITION;p=pitProgress(18);check(s.observe(&p)&&!s.observe(&p),"duplicate PIT stage rejected");
+    s=OdinUi::ProgressState();s.operation=EJODIN4_FLASH_REPARTITION;p=pitProgress(18);p.acknowledged_bytes=1;check(!s.observe(&p),"PIT bytes excluded from firmware acknowledgement counter");
+    s=OdinUi::ProgressState();s.operation=EJODIN4_FLASH_REPARTITION;p=pitProgress(18);p.package_role=8;check(!s.observe(&p),"PIT upload is not a firmware image role");
+    for(unsigned phase=23;phase<=24;++phase){s=OdinUi::ProgressState();s.operation=EJODIN4_FLASH_REPARTITION;p=pitProgress(phase);check(!s.observe(&p),"obsolete repartition phase rejected");}
+    EJODIN4_FlashResult rep=finalized();rep.operation=EJODIN4_FLASH_REPARTITION;rep.phase=EJODIN4_PHASE_COMPLETE;rep.flags|=EJODIN4_FLASH_PIT_WRITE_STARTED|EJODIN4_FLASH_PIT_UPLOADED|EJODIN4_FLASH_PIT_VERIFIED|EJODIN4_FLASH_REBOOT_SENT;
+    OdinUi::ProgressState repState=context();repState.operation=EJODIN4_FLASH_REPARTITION;repState.pitStage=3;
+    check(OdinUi::completion(rep,EJODIN4_OK,EJODIN4_FLASH_REPARTITION,true,false,repState).success,"repartition success requires complete PIT and firmware proof");
+    repState.pitStage=2;check(!OdinUi::completion(rep,EJODIN4_OK,EJODIN4_FLASH_REPARTITION,true,false,repState).success,"result alone cannot replace missing PIT readback callback");repState.pitStage=3;
+    rep.phase=EJODIN4_PHASE_FAILED;rep.last_proven_phase=18;rep.image_count=4;rep.images_completed=0;rep.acknowledged_bytes=0;rep.total_bytes=100;repState.acknowledged=0;repState.pitStage=1;
+    for(unsigned mask=0;mask<16;++mask){
+        rep.flags=((mask&1)?EJODIN4_FLASH_ANY_WRITE:0)|((mask&2)?EJODIN4_FLASH_PIT_WRITE_STARTED:0)|((mask&4)?EJODIN4_FLASH_PIT_UPLOADED:0)|((mask&8)?EJODIN4_FLASH_PIT_VERIFIED:0);
+        const bool expected=mask==0||mask==3||mask==7||mask==15;
+        const OdinUi::Completion failed=OdinUi::completion(rep,EJODIN4_USB_IO_ERROR,EJODIN4_FLASH_REPARTITION,true,false,repState);
+        check(failed.valid==expected&&!failed.success,"PIT provenance chain exhaustively validates zero-image failures");
+    }
+    rep.flags=EJODIN4_FLASH_ANY_WRITE|EJODIN4_FLASH_PIT_WRITE_STARTED;rep.transport=EJODIN4_DOWNLOAD_WINUSB;
+    check(!OdinUi::completion(rep,EJODIN4_USB_IO_ERROR,EJODIN4_FLASH_REPARTITION,true,false,repState).valid,"repartition rejects unsupported WinUSB result");
+    rep.transport=EJODIN4_DOWNLOAD_SAMSUNG_SERIAL;rep.operation=EJODIN4_FLASH_WRITE;rep.last_proven_phase=EJODIN4_PHASE_NEGOTIATING;
+    check(!OdinUi::completion(rep,EJODIN4_USB_IO_ERROR,EJODIN4_FLASH_WRITE,true,false,repState).valid,"ordinary write rejects PIT side-effect flags");
+    check(OdinUi::tone(L"Re-partition: replace PIT before images")==OdinUi::Warning&&OdinUi::tone(L"PIT readback verified.")==OdinUi::Good,"repartition warning and verified proof use distinct log tones");
+    // PIT writes are explicit and their separate proof cannot be inferred from image totals.
+    OdinUi::ProgressState rp;rp.operation=EJODIN4_FLASH_REPARTITION;rp.roleMask=1u<<2;rp.packageCount=2;
+    EJODIN4_FlashProgress pitProgress;std::memset(&pitProgress,0,sizeof(pitProgress));pitProgress.struct_size=sizeof(pitProgress);
+    pitProgress.image_count=26;pitProgress.total_bytes=100;pitProgress.phase=EJODIN4_PHASE_PIT_UPLOAD_BEGIN;
+    OdinUi::ProgressState normal=rp;normal.operation=EJODIN4_FLASH_WRITE;check(!normal.observe(&pitProgress),"normal flash rejects PIT-changing callback");
+    OdinUi::ProgressState offlinePit=rp;offlinePit.operation=EJODIN4_FLASH_PLAN_ONLY;check(!offlinePit.observe(&pitProgress),"offline plan never uploads PIT");
+    OdinUi::ProgressState readPit=rp;readPit.operation=EJODIN4_FLASH_READ_PIT;check(!readPit.observe(&pitProgress),"read-PIT operation never uploads PIT");
+    OdinUi::ProgressState earlyImage=rp;EJODIN4_FlashProgress early=image();check(!earlyImage.observe(&early),"repartition rejects firmware before verified readback");
+    OdinUi::ProgressState skippedPit=rp;pitProgress.phase=EJODIN4_PHASE_PIT_VERIFIED;check(!skippedPit.observe(&pitProgress),"cannot skip upload proof phases");
+    pitProgress.phase=EJODIN4_PHASE_PIT_UPLOAD_BEGIN;check(rp.observe(&pitProgress)&&rp.pitStage==1,"explicit PIT begin accepted without firmware ACK");
+    OdinUi::ProgressState malformedPit=rp;EJODIN4_FlashProgress malformed=pitProgress;malformed.image_bytes=1;check(!malformedPit.observe(&malformed),"PIT bytes never count as firmware image bytes");
+    malformedPit=rp;malformed=pitProgress;malformed.package_role=8;check(!malformedPit.observe(&malformed),"PIT stage uses global callback context not archive role");
+    malformedPit=rp;malformed=pitProgress;malformed.partition.identifier=1;check(!malformedPit.observe(&malformed),"PIT stage cannot smuggle image partition metadata");
+    pitProgress.phase=EJODIN4_PHASE_PIT_UPLOAD_COMPLETE;check(rp.observe(&pitProgress)&&rp.pitStage==2,"PIT upload acknowledgment separate from readback");
+    earlyImage=rp;check(!earlyImage.observe(&early),"uploaded PIT alone cannot authorize image progress");
+    pitProgress.phase=EJODIN4_PHASE_PIT_VERIFIED;check(rp.observe(&pitProgress)&&rp.pitStage==3,"PIT readback accepted after upload");
+    check(rp.observe(&early),"ordinary image phases allowed after PIT verification");
+    OdinUi::ProgressState regressionPit=rp;pitProgress.phase=EJODIN4_PHASE_PIT_UPLOAD_COMPLETE;check(!regressionPit.observe(&pitProgress),"PIT proof phases cannot regress");
+    EJODIN4_FlashResult repartDone=finalized();repartDone.operation=EJODIN4_FLASH_REPARTITION;repartDone.phase=EJODIN4_PHASE_COMPLETE;repartDone.flags|=EJODIN4_FLASH_REBOOT_SENT|EJODIN4_FLASH_PIT_WRITE_STARTED|EJODIN4_FLASH_PIT_UPLOADED|EJODIN4_FLASH_PIT_VERIFIED;
+    OdinUi::ProgressState repartState=context();repartState.operation=EJODIN4_FLASH_REPARTITION;repartState.pitStage=3;
+    check(OdinUi::completion(repartDone,EJODIN4_OK,EJODIN4_FLASH_REPARTITION,true,false,repartState).success,"full PIT proof plus completed firmware succeeds");
+    repartState.pitStage=2;check(!OdinUi::completion(repartDone,EJODIN4_OK,EJODIN4_FLASH_REPARTITION,true,false,repartState).success,"result flags cannot replace missing observed readback");repartState.pitStage=3;
+    for(unsigned bit=64;bit<=256;bit*=2){EJODIN4_FlashResult missingProof=repartDone;missingProof.flags&=~bit;check(!OdinUi::completion(missingProof,EJODIN4_OK,EJODIN4_FLASH_REPARTITION,true,false,repartState).success,"every explicit PIT result proof is required");}
+    OdinUi::ProgressState ordinaryState=repartState;ordinaryState.operation=EJODIN4_FLASH_WRITE;
+    check(!OdinUi::completion(repartDone,EJODIN4_OK,EJODIN4_FLASH_WRITE,true,false,ordinaryState).valid,"unrequested PIT result flags invalid");
+    EJODIN4_FlashResult repartWarning=repartDone;repartWarning.phase=EJODIN4_PHASE_FAILED;repartWarning.flags&=~EJODIN4_FLASH_REBOOT_SENT;
+    check(OdinUi::completion(repartWarning,EJODIN4_USB_IO_ERROR,EJODIN4_FLASH_REPARTITION,true,false,repartState).rebootWarning,"fully verified PIT and firmware permit narrow reboot warning");
+    repartWarning.flags&=~EJODIN4_FLASH_PIT_VERIFIED;check(!OdinUi::completion(repartWarning,EJODIN4_USB_IO_ERROR,EJODIN4_FLASH_REPARTITION,true,false,repartState).rebootWarning,"reboot warning cannot hide missing PIT proof");
+    EJODIN4_FlashResult pitFailure;std::memset(&pitFailure,0,sizeof(pitFailure));pitFailure.struct_size=sizeof(pitFailure);pitFailure.operation=EJODIN4_FLASH_REPARTITION;pitFailure.phase=EJODIN4_PHASE_FAILED;pitFailure.last_proven_phase=EJODIN4_PHASE_PIT_UPLOAD_COMPLETE;
+    pitFailure.flags=EJODIN4_FLASH_ANY_WRITE|EJODIN4_FLASH_PIT_WRITE_STARTED|EJODIN4_FLASH_PIT_UPLOADED;pitFailure.transport=EJODIN4_DOWNLOAD_SAMSUNG_SERIAL;pitFailure.protocol_version=3;
+    OdinUi::ProgressState failedState;failedState.operation=EJODIN4_FLASH_REPARTITION;failedState.pitStage=2;
+    OdinUi::Completion failedDone=OdinUi::completion(pitFailure,EJODIN4_PIT_MAPPING_ERROR,EJODIN4_FLASH_REPARTITION,false,false,failedState);
+    check(failedDone.valid&&!failedDone.success,"PIT upload readback failure remains valid failed result without firmware ACK");
+    pitFailure.flags&=~EJODIN4_FLASH_ANY_WRITE;check(!OdinUi::completion(pitFailure,EJODIN4_PIT_MAPPING_ERROR,EJODIN4_FLASH_REPARTITION,false,false,failedState).valid,"PIT started requires destructive-write warning bit");
+    plan=EJODIN4_FlashResult();plan.struct_size=sizeof(plan);plan.operation=EJODIN4_FLASH_PLAN_ONLY;plan.phase=EJODIN4_PHASE_COMPLETE;plan.flags=EJODIN4_FLASH_PLAN_READY;plan.image_count=2;plan.total_bytes=100;
+    OdinUi::ProgressState repartPlan;repartPlan.operation=EJODIN4_FLASH_PLAN_ONLY;
+    check(OdinUi::completion(plan,EJODIN4_OK,EJODIN4_FLASH_PLAN_ONLY,false,false,repartPlan).success,"offline target plan needs no device-write proof");
+    check(OdinUi::tone(L"Re-partition: write selected PIT")==OdinUi::Warning,"destructive configuration stays amber");
     std::printf("%s BCC UI logic: %u checks; no device I/O\n",failures?"FAIL":"PASS",checks);return failures?1:0;
 }

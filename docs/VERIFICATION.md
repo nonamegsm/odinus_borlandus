@@ -69,10 +69,27 @@ Build/test runners validate the actual manifest-selected executable and source/h
 
 ## Firmware-independent capacity validation
 
-ABI 1.11 keeps request/progress/result records at 64/537/68 bytes. Mixed-storage WRITE results use EJODIN4_FLASH_PER_PARTITION_PIT_UNITS (32) with logical_sector_bytes=0; each image is still checked using its own known allocation unit. Homogeneous results expose a common unit. No request flag bypasses capacity validation. These are PIT storage-type conventions, not live READ CAPACITY measurements. Existing checksums and second-pass digests bind transferred bytes to the selected input and are not model eligibility gates. Tests also reject assigning one supplied USERDATA capacity to distinct partition aliases while accepting repeated transfers to the same destination. The build records identify the actual rebuilt executable and test output.
+ABI 1.12 keeps request/progress/result records at 64/537/68 bytes. Mixed-storage WRITE/REPARTITION results use EJODIN4_FLASH_PER_PARTITION_PIT_UNITS (32) with logical_sector_bytes=0; each image is still checked using its own known allocation unit. Homogeneous results expose a common unit. No request flag bypasses capacity validation. These are PIT storage-type conventions, not live READ CAPACITY measurements. Existing checksums and second-pass digests bind transferred bytes to the selected input and are not model eligibility gates. Tests also reject assigning one supplied USERDATA capacity to distinct partition aliases while accepting repeated transfers to the same destination. The build records identify the actual rebuilt executable and test output.
 
 ## Negotiated native protocols
 
-The native stock-driver engine supports reviewed protocols 1–5, including capability-selected LZ4 block-record sequences and authenticated DEVINFO model/carrier policy for newer writes. Raw 1–3 and the reviewed WinUSB 1–3 path retain their established transcripts. Eight native suites pass in Debug and Release, plus seven manifest regressions and seven/thirteen owned-window offline cases. The actual C++Builder Base-to-Debug build also passes with sixteen objects.
+The native stock-driver engine supports reviewed protocols 1–5, including capability-selected LZ4 block-record sequences and authenticated DEVINFO model/carrier policy for newer writes. Raw 1–3 and the reviewed WinUSB 1–3 path retain their established transcripts. Current Debug/Release counts are recorded below. The earlier C++Builder Base-to-Debug entry-point verification is historical; it was not repeated for the repartition change.
 
 No genuine manufacturer-signed positive manifest fixture or physical protocol-4/5 run was available. Independent generated-key CryptoAPI vectors test the cryptographic primitive and production rejection of the test key; they do not substitute for that missing positive manufacturer/device evidence. See [native protocol compatibility](NATIVE_PROTOCOL_COMPATIBILITY.md) for source Evidence and exact limits.
+
+## 2026-10-18 explicit repartition verification
+
+The [repartition implementation](REPARTITION.md) follows the retained native host upload sequence and adds stricter raw-data reply checks, candidate preflight, unconditional logical read-back verification and independent PIT-write provenance. Ordinary reference archives remain metadata-only. An explicit offline-only planning marker checks embedded candidates without changing ordinary plan semantics.
+
+Both commands passed on the final source/header snapshot:
+
+```powershell
+py tests/run_tests.py --build-app --configuration Debug
+py tests/run_tests.py --build-app --configuration Release
+```
+
+Each configuration compiled and linked sixteen BCC32 objects and passed all eight native suites: core 832; archive 173; streaming 979; protocol/session 12,974,522; transport 299; signed identity 112; DEVINFO 21; UI decisions 152. Total: **12,977,090 native checks per configuration**, plus 234 persistent-log checks, seven manifest regressions and thirteen owned-window offline cases at 1140x840 and 1040x760. Python syntax checks and `git diff --check` passed. Existing compiler warnings in the unchanged guard/vendor patterns remain; no compile errors. No new dependencies or source cleanup were introduced.
+
+The new fault matrix covers exact upload controls/raw bytes, every upload acknowledgement, short writes/replies, foreign/negative responses, cancellation before and after PIT side effects, failed or mismatched read-back even with caller units, raw override and malformed embedded PITs, unsupported stock routes/capacity before upload, missing newer identity and WinUSB rejection. Offline UI regressions additionally reject oversized or unsupported embedded candidates before connection. Independent architecture and final code reviews passed after the embedded-plan correction; final visual verdict is 93/100.
+
+The portable `dist/OdinBCC.exe` and matching manifest are published from the verified Release snapshot. [Build evidence](native-build-verification.json) records binary/source/header/object hashes, imports, per-suite outputs and remaining limits. No phone was enumerated, probed, read, repartitioned or flashed. Standalone PIT-only writes, partial-firmware repartition, WinUSB repartition and XML conversion remain unsupported. Optional real-firmware offline suites and IDE entry-point tests were not rerun for this feature; synthetic tests do not establish physical compatibility or recovery.

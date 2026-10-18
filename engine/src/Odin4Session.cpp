@@ -1,4 +1,5 @@
 #include "Odin4Session.h"
+#include "Odin4LayoutProfile.h"
 #include <algorithm>
 #include <cstring>
 #include <utility>
@@ -19,6 +20,7 @@ uint32_t stock_sequence_bytes(const EJODIN4_PitEntry& route) {
 uint32_t le32(const uint8_t* p) { return uint32_t(p[0])|uint32_t(p[1])<<8|uint32_t(p[2])<<16|uint32_t(p[3])<<24; }
 void put32(uint8_t* p,uint32_t v) { for(unsigned i=0;i<4;++i) p[i]=uint8_t(v>>(i*8)); }
 }
+bool stock_image_route_supported(const EJODIN4_PitEntry& route) { return stock_sequence_bytes(route)!=0; }
 Session::Session(DownloadChannel& c,SessionProgress p,uint32_t timeout):channel_(c),progress_(p),packet_bytes_(131072),flash_timeout_(30000),timeout_override_(timeout),begun_(false),failed_(false),total_set_(false),identity_validated_(false),metadata_baseline_set_(false),metadata_baseline_tail_(false),total_(0) {
     state_.transport=c.transport(); if(timeout) flash_timeout_=timeout;
 }
@@ -57,9 +59,21 @@ EJODIN4_Status Session::command(uint32_t cmd,uint32_t sub,const uint32_t* words,
     if(s!=EJODIN4_OK) return fail(s,"Write Odin request failed",error);
     return response(cmd,capability,timeout,error,cmd==0x64 && sub==1);
 }
-EJODIN4_Status Session::begin(std::vector<EJODIN4_PitEntry>& output,std::string& error,uint64_t planned_total,const FirmwareIdentity* identity) {
+EJODIN4_Status Session::begin(std::vector<EJODIN4_PitEntry>& output,std::string& error,uint64_t planned_total,const FirmwareIdentity* identity,const std::vector<uint8_t>* repartition_pit) {
     if(begun_ || failed_ || !channel_.opened()) { error="Odin session cannot begin"; return EJODIN4_INVALID_ARGUMENT; }
     state_.transport=channel_.transport();
+    if(repartition_pit) {
+        if(state_.transport!=EJODIN4_DOWNLOAD_SAMSUNG_SERIAL) {
+            error="Repartition is supported only through the reviewed Samsung stock-driver flow";
+            return fail(EJODIN4_DRIVER_UNSUPPORTED,"Unreviewed repartition transport",error);
+        }
+        if(!planned_total || !identity) { error="Repartition requires a preflighted firmware write context";return fail(EJODIN4_INVALID_ARGUMENT,"Missing repartition context",error); }
+        std::vector<EJODIN4_PitEntry> candidate(512);uint32_t count=0;char text[256]={0};
+        if(repartition_pit->empty() || repartition_pit->size()>1048576u ||
+            EJODIN4_ParsePit(&(*repartition_pit)[0],uint32_t(repartition_pit->size()),&candidate[0],512,&count,text,sizeof(text))!=EJODIN4_OK) {
+            error="Repartition candidate PIT is invalid";return fail(EJODIN4_INVALID_PIT,"Invalid candidate PIT",error);
+        }
+    }
     phase(EJODIN4_PHASE_HANDSHAKE);
     EJODIN4_Status s=channel_.handshake(error);
     if(s!=EJODIN4_OK) return fail(s,"Odin handshake failed",error);
@@ -101,6 +115,28 @@ EJODIN4_Status Session::begin(std::vector<EJODIN4_PitEntry>& output,std::string&
             return fail(EJODIN4_DRIVER_UNSUPPORTED,"Missing firmware identity",error);
         }
     }
+    if(repartition_pit) {
+        // Intent callback precedes the cancellation boundary and does not prove a write.
+        phase(EJODIN4_PHASE_PIT_UPLOAD_BEGIN);
+        s=channel_.interrupted(error);
+        if(s!=EJODIN4_OK)return fail(s,"Repartition cancelled before PIT upload",error);
+        state_.any_write=true;state_.pit_write_started=true;
+        // Native 0x435240: control, size, exact raw buffer, final size.
+        // A failed first command can still have reached the device.
+        s=command(0x65,0,0,0,false,flash_timeout_,error);
+        if(s!=EJODIN4_OK)return s;
+        const uint32_t size=uint32_t(repartition_pit->size());
+        s=command(0x65,2,&size,1,false,flash_timeout_,error);
+        if(s!=EJODIN4_OK)return s;
+        s=channel_.write_exact(&(*repartition_pit)[0],size,timeout_override_?timeout_override_:flash_timeout_,error);
+        if(s!=EJODIN4_OK)return fail(s,"Raw PIT upload failed",error);
+        s=response(0x65,false,timeout_override_?timeout_override_:flash_timeout_,error);
+        if(s!=EJODIN4_OK)return s;
+        s=command(0x65,3,&size,1,false,flash_timeout_,error);
+        if(s!=EJODIN4_OK)return s;
+        state_.pit_uploaded=true;
+        phase(EJODIN4_PHASE_PIT_UPLOAD_COMPLETE);
+    }
     s=command(0x65,1,0,0,false,channel_.timeout(),error);
     if(s!=EJODIN4_OK) return s;
     const uint32_t pit_size=state_.last_ack;
@@ -136,6 +172,14 @@ EJODIN4_Status Session::begin(std::vector<EJODIN4_PitEntry>& output,std::string&
     s=EJODIN4_ParsePit((&pit[0]),pit_size,(&entries[0]),512,&count,diagnostic,sizeof(diagnostic));
     if(s!=EJODIN4_OK) { error=std::string("Device PIT rejected: ")+diagnostic;return fail(s,"Device PIT parse failed",error); }
     entries.resize(count);
+    if(repartition_pit) {
+        if(!same_pit_layout(*repartition_pit,pit)) {
+            error="Device PIT read-back differs from the uploaded candidate; no firmware images were sent";
+            return fail(EJODIN4_PIT_MAPPING_ERROR,"Repartition read-back mismatch",error);
+        }
+        state_.pit_verified=true;
+        phase(EJODIN4_PHASE_PIT_VERIFIED);
+    }
     // The pinned query and post-file counter reset have identical 64/1 wire
     // requests. Establish their 8/12-byte framing before any image can be sent.
     if(channel_.transport()==EJODIN4_DOWNLOAD_WINUSB) {
@@ -183,7 +227,7 @@ EJODIN4_Status Session::announce_total(uint64_t total,std::string& error) {
 EJODIN4_Status Session::validate_image(const PlanImage& image,std::string& error) {
     if(!begun_ || failed_) {error="Odin session cannot validate image routes";return EJODIN4_INVALID_ARGUMENT;}
     if(state_.protocol_version>=4&&!identity_validated_){error="Firmware identity was not authenticated for this device";return fail(EJODIN4_DRIVER_UNSUPPORTED,"Missing DEVINFO identity validation",error);}
-    if(channel_.transport()==EJODIN4_DOWNLOAD_SAMSUNG_SERIAL && !stock_sequence_bytes(image.route)) {
+    if(channel_.transport()==EJODIN4_DOWNLOAD_SAMSUNG_SERIAL && !stock_image_route_supported(image.route)) {
         error="Unsupported Samsung stock-driver image route: binary type "+decimal(image.route.binary_type)+
             ", device type "+decimal(image.route.device_type)+"; no reviewed raw transfer flow";
         return fail(EJODIN4_DRIVER_UNSUPPORTED,"Unsupported Odin route",error);

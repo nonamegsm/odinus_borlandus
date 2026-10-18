@@ -76,6 +76,9 @@ public:
 EJODIN4_Status open_held_archive(const EJODIN4_FirmwareFile& file,
     const Cancellation& cancel, std::unique_ptr<HeldArchive>& output, std::string& error,
     const ArchiveScanCallback& progress = ArchiveScanCallback());
+// Immutable, bounded raw PIT snapshot using the same readonly regular-file checks.
+EJODIN4_Status load_target_pit(const EJODIN4_FirmwareFile&, const Cancellation&,
+    std::vector<uint8_t>&, std::string&);
 class FirmwareSet {
 public:
     uint32_t data_policy;
@@ -106,7 +109,8 @@ private:
 EJODIN4_Status prepare_firmware_set(const EJODIN4_FirmwareFile* files, uint32_t count,
     uint32_t policy, uint64_t decoded_limit, const Cancellation& cancel,
     std::unique_ptr<FirmwareSet>& output, std::string& error,
-    const VerificationCallback& progress = VerificationCallback());
+    const VerificationCallback& progress = VerificationCallback(),
+    const std::vector<uint8_t>* target_pit = 0);
 // Incremental Android sparse geometry verifier, also used by synthetic tests.
 class SparseGeometry {
 public:

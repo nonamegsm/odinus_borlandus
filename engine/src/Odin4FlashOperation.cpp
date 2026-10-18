@@ -17,6 +17,7 @@ BCC_STATIC_ASSERT(sizeof(EJODIN4_FlashProgress) == 537);
 BCC_STATIC_ASSERT(sizeof(EJODIN4_FlashResult) == 68);
 namespace {
 using namespace ejodin4;
+bool write_operation(uint32_t operation) { return operation==EJODIN4_FLASH_WRITE || operation==EJODIN4_FLASH_REPARTITION; }
 void diagnostic(char* output, uint32_t capacity, const std::string& error)  {
     if (!output || !capacity) return;
     const size_t count = std::min(error.size(), static_cast<size_t>(capacity - 1));
@@ -27,8 +28,8 @@ bool valid_request(const EJODIN4_FlashRequest* request, const EJODIN4_FlashResul
     if (!request || !output || (!text && capacity) || request->struct_size != sizeof(*request)) {
         error = "Invalid flash request/result/diagnostic layout"; return false;
     }
-    if (request->operation > EJODIN4_FLASH_WRITE ||
-        (request->flags & ~static_cast<uint32_t>(EJODIN4_FLASH_REBOOT)) ||
+    if (request->operation > EJODIN4_FLASH_REPARTITION ||
+        (request->flags & ~static_cast<uint32_t>(EJODIN4_FLASH_REBOOT|EJODIN4_FLASH_PLAN_REPARTITION)) ||
         request->reserved[0] || request->reserved[1] ||
         (request->io_timeout_ms && (request->io_timeout_ms < 1000 || request->io_timeout_ms > 120000)) ||
         (request->logical_sector_bytes && request->logical_sector_bytes != 512 &&
@@ -36,7 +37,11 @@ bool valid_request(const EJODIN4_FlashRequest* request, const EJODIN4_FlashResul
         request->userdata_capacity_bytes > UINT64_C(1099511627776)) {
         error = "Unknown flash operation, flags, reserved fields, timeout or verified geometry"; return false;
     }
-    if (request->operation != EJODIN4_FLASH_WRITE && request->flags) {
+    const bool candidate_plan=(request->flags&EJODIN4_FLASH_PLAN_REPARTITION)!=0;
+    if(candidate_plan&&(request->operation!=EJODIN4_FLASH_PLAN_ONLY||request->data_policy!=EJODIN4_CLEAN_INSTALL)) {
+        error="Repartition planning is permitted only for a clean offline plan";return false;
+    }
+    if (!write_operation(request->operation) && request->flags && request->flags!=EJODIN4_FLASH_PLAN_REPARTITION) {
         error = "Reboot is permitted only for an explicit write operation"; return false;
     }
     if (request->operation == EJODIN4_FLASH_PLAN_ONLY) {
@@ -61,15 +66,24 @@ bool valid_request(const EJODIN4_FlashRequest* request, const EJODIN4_FlashResul
         error = "A PIT-only request without files takes no firmware policy or decode budget"; return false;
     }
     uint32_t roles = 0;
-    const uint32_t max_role = request->data_policy == EJODIN4_UPDATE_SELECTED ? EJODIN4_PACKAGE_PIT_REFERENCE : EJODIN4_PACKAGE_USERDATA;
+    const bool repartition=request->operation==EJODIN4_FLASH_REPARTITION;
+    const bool target_allowed=(repartition||request->operation==EJODIN4_FLASH_PLAN_ONLY)&&request->data_policy==EJODIN4_CLEAN_INSTALL;
+    if(repartition&&request->data_policy!=EJODIN4_CLEAN_INSTALL){error="Repartition requires the clean-install data policy";return false;}
+    const uint32_t max_role = target_allowed?EJODIN4_PACKAGE_PIT_TARGET:request->data_policy == EJODIN4_UPDATE_SELECTED ? EJODIN4_PACKAGE_PIT_REFERENCE : EJODIN4_PACKAGE_USERDATA;
     for (uint32_t i = 0; i < request->file_count; ++i) {
         const EJODIN4_FirmwareFile& file = request->files[i];
         if (file.role < EJODIN4_PACKAGE_BL || file.role > max_role ||
+            (file.role==EJODIN4_PACKAGE_PIT_REFERENCE&&request->data_policy!=EJODIN4_UPDATE_SELECTED) ||
             (roles & (1u << file.role)) || !file.path || file.path_bytes < 2 || file.path_bytes > 32768 ||
             file.path[file.path_bytes - 1] != 0 || std::memchr(file.path, 0, file.path_bytes - 1)) {
             error = "Firmware package roles/paths are invalid or duplicated"; return false;
         }
         roles |= 1u << file.role;
+    }
+    if(repartition||candidate_plan||(roles&(1u<<EJODIN4_PACKAGE_PIT_TARGET))) {
+        if(!target_allowed||(roles&0x1eu)!=0x1eu || (roles&((1u<<EJODIN4_PACKAGE_HOME_CSC)|(1u<<EJODIN4_PACKAGE_PIT_REFERENCE)))) {
+            error="Repartition candidate needs complete clean BL/AP/CP/CSC firmware; references and HOME_CSC cannot authorize it";return false;
+        }
     }
     if (request->data_policy == EJODIN4_UPDATE_SELECTED &&
         ((roles == (1u << EJODIN4_PACKAGE_PIT_REFERENCE)) ||
@@ -135,7 +149,10 @@ struct Events {
         result.last_response_id = state.last_response_id; result.last_ack = state.last_ack;
         image_acknowledged = state.image_acknowledged_bytes;
         if (state.any_write) result.flags |= EJODIN4_FLASH_ANY_WRITE;
-        if (result.operation == EJODIN4_FLASH_WRITE) {
+        if (state.pit_write_started) result.flags |= EJODIN4_FLASH_PIT_WRITE_STARTED;
+        if (state.pit_uploaded) result.flags |= EJODIN4_FLASH_PIT_UPLOADED;
+        if (state.pit_verified) result.flags |= EJODIN4_FLASH_PIT_VERIFIED;
+        if (write_operation(result.operation)) {
             if (state.finalized) result.flags |= EJODIN4_FLASH_FINALIZED;
             if (state.reboot_sent) result.flags |= EJODIN4_FLASH_REBOOT_SENT;
         }
@@ -170,9 +187,21 @@ EJODIN4_Status perform(const EJODIN4_FlashRequest& request, EJODIN4_FlashResult&
     events.phase(EJODIN4_PHASE_PREFLIGHT);
     std::unique_ptr<FirmwareSet> firmware;
     EJODIN4_Status status = EJODIN4_OK;
+    const bool repartition=request.operation==EJODIN4_FLASH_REPARTITION;
+    const bool writing=write_operation(request.operation);
+    std::vector<EJODIN4_FirmwareFile> archive_files;
+    std::vector<uint8_t> target_pit;
+    bool explicit_target=false;
+    for(uint32_t file=0;file<request.file_count;++file) {
+        if(request.files[file].role==EJODIN4_PACKAGE_PIT_TARGET) {
+            status=load_target_pit(request.files[file],cancel,target_pit,error);
+            if(status!=EJODIN4_OK)return status;
+            explicit_target=true;
+        } else archive_files.push_back(request.files[file]);
+    }
     if (request.file_count) {
-        status = prepare_firmware_set(request.files, request.file_count, request.data_policy,
-            request.decoded_limit, cancel, firmware, error,VerificationCallback(Events::verified,&events));
+        status = prepare_firmware_set(&archive_files[0], uint32_t(archive_files.size()), request.data_policy,
+            request.decoded_limit, cancel, firmware, error,VerificationCallback(Events::verified,&events),explicit_target?&target_pit:0);
         if (status != EJODIN4_OK) return status;
         if (!firmware.get() || firmware->images.empty() || firmware->images.size() > UINT32_MAX) {
             error = "Firmware preparation returned no bounded transfer plan"; return EJODIN4_INTERNAL_ERROR;
@@ -186,19 +215,29 @@ EJODIN4_Status perform(const EJODIN4_FlashRequest& request, EJODIN4_FlashResult&
         events.image = 0; events.index = 0;
         for (size_t k=0;k<firmware->skips.size();++k){const PlanSkip& skip=firmware->skips[k];events.emit(EJODIN4_PHASE_PLAN_SKIP, &skip.route, skip.reason, skip.role, skip.name);}
     }
+    if(repartition||explicit_target||(request.flags&EJODIN4_FLASH_PLAN_REPARTITION)) {
+        // Candidate geometry and every transfer route must pass before PIT mutation.
+        LayoutResolution candidate;
+        status=resolve_layout_profile(*firmware,firmware->package_pit_bytes,&archive_files[0],uint32_t(archive_files.size()),request.logical_sector_bytes,candidate,error);
+        if(status==EJODIN4_OK)status=firmware->validate_device_pit(firmware->package_pit,candidate.sector_bytes,error,request.userdata_capacity_bytes);
+        if(status!=EJODIN4_OK)return status;
+        for(size_t image=0;image<firmware->images.size();++image)if(!stock_image_route_supported(firmware->images[image].route)) {
+            error="Candidate PIT contains an unsupported Samsung stock-driver image route";return EJODIN4_DRIVER_UNSUPPORTED;
+        }
+    }
     if (request.operation == EJODIN4_FLASH_PLAN_ONLY) {
         return firmware->verify_unchanged(error);
     }
     events.phase(EJODIN4_PHASE_PREFLIGHT);
     FirmwareIdentity identity;
-    if(request.operation==EJODIN4_FLASH_WRITE){
+    if(writing){
         const EJODIN4_Status authenticated=firmware->authenticate_identity(identity,cancel,VerificationCallback(Events::verified,&events));
         if(authenticated==EJODIN4_CANCELLED)return authenticated;
         // Legacy versions do not require signed DEVINFO. Retain missing/failed
         // proof in context so newer native versions cannot authorize writes.
     }
     EncodedReaders encoded;
-    if(request.operation==EJODIN4_FLASH_WRITE){
+    if(writing){
         encoded.readers.resize(firmware->images.size(),static_cast<EncodedImageReader*>(0));
         for(size_t i=0;i<firmware->images.size();++i){
             const PlanImage& image=firmware->images[i];EncodedAuditProgress audit(events,image,request.file_count);std::unique_ptr<EncodedImageReader> reader;
@@ -207,6 +246,10 @@ EJODIN4_Status perform(const EJODIN4_FlashRequest& request, EJODIN4_FlashResult&
             if(status!=EJODIN4_OK)return status;
             encoded.readers[i]=reader.release();
         }
+    }
+    if(repartition) {
+        status=firmware->verify_unchanged(error);
+        if(status!=EJODIN4_OK)return status;
     }
     if (cancel.requested()) { error = "Flash operation cancelled before connecting"; return EJODIN4_CANCELLED; }
     events.phase(EJODIN4_PHASE_CONNECTING);
@@ -220,8 +263,8 @@ EJODIN4_Status perform(const EJODIN4_FlashRequest& request, EJODIN4_FlashResult&
     if (status != EJODIN4_OK) return status;
     Session session(channel,SessionProgress(Events::session_changed,&events),request.io_timeout_ms);
     std::vector<EJODIN4_PitEntry> pit;
-    status = session.begin(pit, error, request.operation == EJODIN4_FLASH_WRITE ? firmware->total_bytes : 0,
-        request.operation == EJODIN4_FLASH_WRITE ? &identity : 0);
+    status = session.begin(pit, error, writing ? firmware->total_bytes : 0,
+        writing ? &identity : 0,repartition?&firmware->package_pit_bytes:0);
     if (status == EJODIN4_OK) {
         output.pit_entry_count = static_cast<uint32_t>(pit.size());
         for (size_t k=0;k<pit.size();++k) events.emit(EJODIN4_PHASE_PIT_ENTRY,&pit[k]);
@@ -229,7 +272,7 @@ EJODIN4_Status perform(const EJODIN4_FlashRequest& request, EJODIN4_FlashResult&
     }
     if (status == EJODIN4_OK && firmware.get()) {
         LayoutResolution geometry;
-        status = resolve_layout_profile(*firmware, session.pit_bytes(), request.files, request.file_count,
+        status = resolve_layout_profile(*firmware, session.pit_bytes(), &archive_files[0], uint32_t(archive_files.size()),
             request.logical_sector_bytes, geometry, error);
         if (status == EJODIN4_OK) {
             output.logical_sector_bytes = geometry.sector_bytes;
@@ -239,13 +282,13 @@ EJODIN4_Status perform(const EJODIN4_FlashRequest& request, EJODIN4_FlashResult&
         if (status == EJODIN4_OK) {
             events.geometry_source = geometry.source;
             output.flags |= EJODIN4_FLASH_PIT_MATCHED;
-            if(request.operation == EJODIN4_FLASH_WRITE && geometry.per_partition_units)
+            if(writing && geometry.per_partition_units)
                 output.flags |= EJODIN4_FLASH_PER_PARTITION_PIT_UNITS;
             output.logical_sector_bytes = geometry.sector_bytes;
             events.phase(EJODIN4_PHASE_PLAN_VALIDATED);
         }
     }
-    if (status == EJODIN4_OK && request.operation == EJODIN4_FLASH_WRITE) {
+    if (status == EJODIN4_OK && writing) {
         // Reject every unsupported route before any earlier image can be written.
         for(size_t route_index=0;route_index<firmware->images.size();++route_index) {
             status=session.validate_image(firmware->images[route_index],error);
@@ -263,7 +306,7 @@ EJODIN4_Status perform(const EJODIN4_FlashRequest& request, EJODIN4_FlashResult&
         events.image = 0; events.index = 0;
         if (status == EJODIN4_OK) status = firmware->verify_unchanged(error);
     }
-    if (status == EJODIN4_OK) status = session.finish(request.operation == EJODIN4_FLASH_WRITE && (request.flags & EJODIN4_FLASH_REBOOT), error);
+    if (status == EJODIN4_OK) status = session.finish(writing && (request.flags & EJODIN4_FLASH_REBOOT), error);
     const std::string primary = error;
     std::string cleanup;
     const EJODIN4_Status closed = session.close(cleanup);
@@ -297,10 +340,14 @@ static EJODIN4_Status flash_api(
     // perform owns the set; a throwing callback can unwind it before this emit.
     events.image = 0; events.index = 0; events.image_acknowledged = 0;
     if (status == EJODIN4_OK) {
-        if (request->operation == EJODIN4_FLASH_WRITE &&
+        if (write_operation(request->operation) &&
             (!(result.flags & EJODIN4_FLASH_FINALIZED) || result.images_completed != result.image_count ||
              result.acknowledged_bytes != result.total_bytes)) {
             error = "Session did not prove all planned images and finalization"; status = EJODIN4_INVALID_RESPONSE;
+        }
+        const uint32_t pit_proof=EJODIN4_FLASH_PIT_WRITE_STARTED|EJODIN4_FLASH_PIT_UPLOADED|EJODIN4_FLASH_PIT_VERIFIED;
+        if(request->operation==EJODIN4_FLASH_REPARTITION&&(result.flags&pit_proof)!=pit_proof) {
+            error="Repartition did not prove PIT upload and matching read-back";status=EJODIN4_INVALID_RESPONSE;
         }
     }
     if (status == EJODIN4_OK) { result.phase = EJODIN4_PHASE_COMPLETE; }

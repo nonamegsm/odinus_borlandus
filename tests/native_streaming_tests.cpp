@@ -25,11 +25,11 @@ static void append(Bytes& tar,const char* name,const Bytes& data){
 struct Temp {
     std::vector<std::string> files;
     ~Temp(){for(size_t i=0;i<files.size();++i)DeleteFileA(files[i].c_str());}
-    std::string write(Bytes data){
-        data.resize(data.size()+1024,0);char folder[MAX_PATH+1]={0},name[MAX_PATH+1]={0};
+    std::string write(Bytes data,bool archive=true){
+        if(archive)data.resize(data.size()+1024,0);char folder[MAX_PATH+1]={0},name[MAX_PATH+1]={0};
         check(GetTempPathA(MAX_PATH,folder)!=0&&GetTempFileNameA(folder,"obc",0,name)!=0,"temporary TAR path");
         HANDLE file=CreateFileA(name,GENERIC_WRITE,0,0,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,0);check(file!=INVALID_HANDLE_VALUE,"open temporary TAR");
-        DWORD actual=0;BOOL ok=WriteFile(file,&data[0],DWORD(data.size()),&actual,0);CloseHandle(file);files.push_back(name);check(ok&&actual==data.size(),"write temporary TAR");return name;
+        DWORD actual=0;BOOL ok=WriteFile(file,data.empty()?0:&data[0],DWORD(data.size()),&actual,0);CloseHandle(file);files.push_back(name);check(ok&&actual==data.size(),"write temporary TAR/raw PIT");return name;
     }
 };
 static Bytes pit(){
@@ -64,6 +64,35 @@ static void planner_tests(){
     check(prepare_firmware_set(files,3,EJODIN4_UPDATE_SELECTED,1,cancel,set,error)==EJODIN4_DECODE_LIMIT_EXCEEDED&&set.get()==0,"decoded byte cap fails closed");
 }
 static std::vector<EJODIN4_PitEntry> parse_test_pit(const Bytes& table){std::vector<EJODIN4_PitEntry> entries(512);uint32_t count=0;char diagnostic[512]={0};check(EJODIN4_ParsePit(&table[0],uint32_t(table.size()),&entries[0],512,&count,diagnostic,sizeof(diagnostic))==EJODIN4_OK,"parse synthetic/optional logical PIT");entries.resize(count);return entries;}
+static void repartition_planner_tests(){
+    Cancellation none={0,0},cancelled={stop,0};std::string error;std::unique_ptr<FirmwareSet> set;Temp temp;
+    Bytes target=pit();le32(target,28+12,0x1234);le32(target,28+24,32);target.resize(target.size()+23,0x93);
+    const std::string raw_path=temp.write(target,false);EJODIN4_FirmwareFile raw={EJODIN4_PACKAGE_PIT_TARGET,raw_path.c_str(),uint32_t(raw_path.size()+1)};Bytes snapshot;
+    check(load_target_pit(raw,none,snapshot,error)==EJODIN4_OK&&snapshot==target,"raw target snapshot preserves exact bytes including transport padding");
+    check(load_target_pit(raw,cancelled,snapshot,error)==EJODIN4_CANCELLED&&snapshot.empty(),"raw target cancellation exposes no stale snapshot");
+    const unsigned bad_sizes[]={0,3,28+131,1024*1024+1};
+    for(size_t i=0;i<sizeof(bad_sizes)/sizeof(bad_sizes[0]);++i){Bytes invalid(bad_sizes[i],0);const std::string path=temp.write(invalid,false);raw.path=path.c_str();raw.path_bytes=uint32_t(path.size()+1);snapshot.assign(3,0xa5);
+        check(load_target_pit(raw,none,snapshot,error)!=EJODIN4_OK&&snapshot.empty(),"empty, truncated and excessive raw PIT never exposes bytes");}
+    Bytes malformed=pit();malformed[0]=0;const std::string malformed_path=temp.write(malformed,false);raw.path=malformed_path.c_str();raw.path_bytes=uint32_t(malformed_path.size()+1);
+    check(load_target_pit(raw,none,snapshot,error)==EJODIN4_INVALID_PIT&&snapshot.empty(),"raw PIT signature parsed before snapshot publication");
+    char folder[MAX_PATH+1]={0};check(GetTempPathA(MAX_PATH,folder)!=0,"raw folder fixture");raw.path=folder;raw.path_bytes=uint32_t(std::strlen(folder)+1);
+    check(load_target_pit(raw,none,snapshot,error)!=EJODIN4_OK&&snapshot.empty(),"raw target rejects directories");
+    std::string paths[4];EJODIN4_FirmwareFile files[4];
+    for(unsigned mode=0;mode<7;++mode){
+        for(unsigned i=0;i<4;++i){Bytes package;append(package,"boot.img",bytes("abc"));
+            if(mode!=1){Bytes embedded=pit();if(mode==0||mode==2)le32(embedded,28+12,i+1);if(mode>=3&&i==mode-3)embedded[0]=0;append(package,"layout.pit",embedded);}
+            paths[i]=temp.write(package);files[i].role=i+1;files[i].path=paths[i].c_str();files[i].path_bytes=uint32_t(paths[i].size()+1);}
+        EJODIN4_Status status=prepare_firmware_set(files,4,EJODIN4_CLEAN_INSTALL,1048576,none,set,error,VerificationCallback(),&target);
+        if(mode>=3)check(status==EJODIN4_INVALID_PIT&&!set.get(),"explicit target cannot hide malformed embedded PIT in any selected archive");
+        else {check(status==EJODIN4_OK&&set.get(),"explicit raw target accepts differing valid or absent embedded PITs");
+            check(set->package_pit_bytes==target&&set->package_pit[0].attributes==0x1234&&set->images.size()==4&&set->total_bytes==12,"candidate controls all routes while repeated firmware bytes remain firmware-only");
+            for(size_t i=0;i<set->images.size();++i)check(set->images[i].route.attributes==0x1234&&set->images[i].route.block_count==32,"every planned route derives from explicit target");
+            check(set->verify_unchanged(error)==EJODIN4_OK,"raw target preparation retains original archive stability checks");
+            if(mode==0){set.reset();check(prepare_firmware_set(files,4,EJODIN4_CLEAN_INSTALL,1048576,none,set,error)!=EJODIN4_OK&&!set.get(),"ordinary archive planning still rejects conflicting embedded PITs");}}
+        set.reset();
+    }
+    Bytes invalid=target;invalid[0]=0;check(prepare_firmware_set(files,4,EJODIN4_CLEAN_INSTALL,1048576,none,set,error,VerificationCallback(),&invalid)==EJODIN4_INVALID_PIT&&!set.get(),"candidate pointer is strictly parsed rather than trusted by planner");
+}
 static void layout_tests(const char* path){
     FirmwareSet firmware;LayoutResolution result;std::string error;Bytes empty;
     check(result.sector_bytes==0&&!result.per_partition_units&&result.source==0,"layout defaults retain no inferred unit");
@@ -180,4 +209,4 @@ static void authenticated_archive_tests(){
  std::vector<Bytes> blocks(1,Bytes(1000,'a'));Bytes frame=encoded_frame(blocks);std::unique_ptr<FirmwareSet> set;check(prepare_encoded(temp,frame,set,error)==EJODIN4_OK,"prepare stored compressed member audit");std::unique_ptr<ImageReader> stored;check(set->archives[0]->open_stored_member(set->images[0].member_index,stored,error)==EJODIN4_OK,"open exact stored bytes independent of decode flag");uint8_t header[4]={0};uint32_t actual=0;check(stored->read(header,4,actual,none,error)==EJODIN4_OK&&actual==4&&header[0]==4&&header[1]==0x22&&header[2]==0x4d&&header[3]==0x18,"signed archive audit hashes compressed frame envelope rather than decoded image");check(stored->read(header,4,actual,cancel,error)==EJODIN4_CANCELLED&&actual==0,"stored identity reader cancellation exposes no bytes");
 }
 
-int main(int argc,char** argv){try{authenticated_archive_tests();encoded_reader_tests();sparse_tests();planner_tests();second_pass_tests();layout_tests(argc>1?argv[1]:0);generic_capacity_tests();userdata_capacity_identity_tests();std::cout<<"native streaming: "<<checks<<" checks passed"<<std::endl;return 0;}catch(const std::exception& error){std::cerr<<"native streaming failed after "<<checks<<" checks: "<<error.what()<<std::endl;return 1;}}
+int main(int argc,char** argv){try{repartition_planner_tests();authenticated_archive_tests();encoded_reader_tests();sparse_tests();planner_tests();second_pass_tests();layout_tests(argc>1?argv[1]:0);generic_capacity_tests();userdata_capacity_identity_tests();std::cout<<"native streaming: "<<checks<<" checks passed"<<std::endl;return 0;}catch(const std::exception& error){std::cerr<<"native streaming failed after "<<checks<<" checks: "<<error.what()<<std::endl;return 1;}}

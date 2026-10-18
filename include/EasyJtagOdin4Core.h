@@ -1,4 +1,4 @@
-/* Native classic BCC Odin engine ABI 1.11. Packed records retained for checked interfaces. */
+/* Native classic BCC Odin engine ABI 1.12. Packed records retained for checked interfaces. */
 #ifndef EASYJTAG_ODIN4_CORE_H
 #define EASYJTAG_ODIN4_CORE_H
 
@@ -49,9 +49,14 @@ enum { EJODIN4_ANALYSIS_PIT_AVAILABLE = 1, EJODIN4_ANALYSIS_ALL_IMAGES_MAPPED = 
 
 /* Flash operations are explicit. PLAN_ONLY performs no device I/O; READ_PIT
  * reads a session PIT and closes without image transfer/reboot. WRITE requires
- * an explicit data policy; package PIT is never uploaded or repartitioned. */
-enum { EJODIN4_FLASH_PLAN_ONLY = 0, EJODIN4_FLASH_READ_PIT = 1, EJODIN4_FLASH_WRITE = 2 };
-enum { EJODIN4_PACKAGE_BL = 1, EJODIN4_PACKAGE_AP = 2, EJODIN4_PACKAGE_CP = 3, EJODIN4_PACKAGE_CSC = 4, EJODIN4_PACKAGE_HOME_CSC = 5, EJODIN4_PACKAGE_USERDATA = 6, EJODIN4_PACKAGE_PIT_REFERENCE = 7 };
+ * an explicit data policy and never uploads a PIT. REPARTITION requires CLEAN_INSTALL,
+ * complete BL/AP/CP/CSC firmware and the Samsung stock driver. It uploads the
+ * selected firmware PIT (or explicit raw PIT_TARGET), verifies read-back, then writes images. */
+enum { EJODIN4_FLASH_PLAN_ONLY = 0, EJODIN4_FLASH_READ_PIT = 1, EJODIN4_FLASH_WRITE = 2, EJODIN4_FLASH_REPARTITION = 3 };
+enum { EJODIN4_PACKAGE_BL = 1, EJODIN4_PACKAGE_AP = 2, EJODIN4_PACKAGE_CP = 3, EJODIN4_PACKAGE_CSC = 4, EJODIN4_PACKAGE_HOME_CSC = 5, EJODIN4_PACKAGE_USERDATA = 6, EJODIN4_PACKAGE_PIT_REFERENCE = 7, EJODIN4_PACKAGE_PIT_TARGET = 8 };
+/* PIT_TARGET is an optional bounded raw binary PIT snapshot, not an archive.
+ * It overrides valid embedded PITs only for REPARTITION or CLEAN_INSTALL PLAN_ONLY.
+ * It is rejected by ordinary WRITE/READ_PIT. PIT_REFERENCE never authorizes upload. */
 /* Package order is BL, AP, CP, selected CSC variant, optional USERDATA slot.
  * HOME_CSC and USERDATA are archive roles, not image names. Preserve mode may
  * use CSC + a USERDATA-slot OEM download list; an additional CSC may supply
@@ -61,8 +66,15 @@ enum { EJODIN4_PACKAGE_BL = 1, EJODIN4_PACKAGE_AP = 2, EJODIN4_PACKAGE_CP = 3, E
  * optional PIT_REFERENCE archive. Reference images never become transfers.
  * USERDATA, MISC and OMR destinations are always excluded in selected mode. */
 enum { EJODIN4_PRESERVE_DATA = 1, EJODIN4_CLEAN_INSTALL = 2, EJODIN4_UPDATE_SELECTED = 3 };
-enum { EJODIN4_FLASH_REBOOT = 1 };
+/* PLAN_REPARTITION validates an embedded candidate in a full CLEAN PLAN_ONLY
+ * request without device I/O. It never authorizes a write. Removed bit2 stays invalid. */
+enum { EJODIN4_FLASH_REBOOT = 1, EJODIN4_FLASH_PLAN_REPARTITION = 4 };
 enum { EJODIN4_FLASH_ANY_WRITE = 1, EJODIN4_FLASH_FINALIZED = 2, EJODIN4_FLASH_REBOOT_SENT = 4, EJODIN4_FLASH_PIT_MATCHED = 8, EJODIN4_FLASH_PLAN_READY = 16, EJODIN4_FLASH_PER_PARTITION_PIT_UNITS = 32 };
+/* STARTED is conservative: the first upload command may have reached the device,
+ * even if no firmware bytes were acknowledged. UPLOADED proves final PIT ACK;
+ * VERIFIED proves logical candidate/read-back equality. These imply each other
+ * in reverse order and STARTED also implies ANY_WRITE. Firmware byte totals exclude PIT. */
+enum { EJODIN4_FLASH_PIT_WRITE_STARTED = 64, EJODIN4_FLASH_PIT_UPLOADED = 128, EJODIN4_FLASH_PIT_VERIFIED = 256 };
 enum {
     EJODIN4_PHASE_PREFLIGHT = 1, EJODIN4_PHASE_PLAN_IMAGE = 2,
     EJODIN4_PHASE_CONNECTING = 3, EJODIN4_PHASE_HANDSHAKE = 4,
@@ -73,7 +85,9 @@ enum {
     EJODIN4_PHASE_REBOOT = 13, EJODIN4_PHASE_COMPLETE = 14,
     EJODIN4_PHASE_FAILED = 15, EJODIN4_PHASE_CANCELLED = 16,
     EJODIN4_PHASE_PLAN_SKIP = 17,
-    EJODIN4_PHASE_VERIFY_ARCHIVE = 20, EJODIN4_PHASE_VERIFY_IMAGE = 21
+    EJODIN4_PHASE_PIT_UPLOAD_BEGIN = 18, EJODIN4_PHASE_PIT_UPLOAD_COMPLETE = 19,
+    EJODIN4_PHASE_VERIFY_ARCHIVE = 20, EJODIN4_PHASE_VERIFY_IMAGE = 21,
+    EJODIN4_PHASE_PIT_VERIFIED = 22
 };
 enum { EJODIN4_SKIP_METADATA = 1, EJODIN4_SKIP_PIT = 2, EJODIN4_SKIP_USERDATA = 3, EJODIN4_SKIP_IDENTICAL_DUPLICATE = 4, EJODIN4_SKIP_CSC_ALTERNATIVE = 5, EJODIN4_SKIP_DOWNLOAD_LIST = 6, EJODIN4_SKIP_PIT_REFERENCE = 7 };
 

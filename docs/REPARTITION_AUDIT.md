@@ -2,6 +2,8 @@
 
 Date: 2026-10-18. Source baseline: `f9aeb51` on `main`.
 
+This is the historical pre-implementation audit. ABI 1.12 subsequently adds a separate explicit repartition operation; see [implementation and usage](REPARTITION.md). The observations below describe the stated baseline and the retained native Odin artifact.
+
 ## Result
 
 **OdinBCC has no REPARTITION implementation. Its PIT reference is routing metadata, not a PIT upload request.** Native Odin 3.14.4 has a separate PIT upload stage before it retrieves the device PIT and maps images. That stage is absent from this port. Selecting a reference archive, choosing Clean installation, or supplying a sector-size override cannot enable it.

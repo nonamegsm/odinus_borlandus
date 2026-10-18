@@ -11,9 +11,10 @@ struct SessionState {
     uint32_t images_completed, last_response_id, last_ack;
     uint64_t acknowledged_bytes, image_acknowledged_bytes;
     bool any_write, finalized, reboot_sent;
+    bool pit_write_started, pit_uploaded, pit_verified;
     bool metadata_tail_present;
     uint32_t metadata_tail_word;
-    SessionState():protocol_version(0),transport(0),phase(0),negotiation_ack(0),images_completed(0),last_response_id(0),last_ack(0),acknowledged_bytes(0),image_acknowledged_bytes(0),any_write(false),finalized(false),reboot_sent(false),metadata_tail_present(false),metadata_tail_word(0){}
+    SessionState():protocol_version(0),transport(0),phase(0),negotiation_ack(0),images_completed(0),last_response_id(0),last_ack(0),acknowledged_bytes(0),image_acknowledged_bytes(0),any_write(false),finalized(false),reboot_sent(false),pit_write_started(false),pit_uploaded(false),pit_verified(false),metadata_tail_present(false),metadata_tail_word(0){}
 };
 // Callback runs synchronously after real state changes; it must not throw.
 typedef bcc::Callback1<const SessionState&> SessionProgress;
@@ -39,7 +40,8 @@ class Session {
         uint32_t word_count, bool capability, uint32_t timeout, std::string&);
 public:
     explicit Session(DownloadChannel&, SessionProgress progress = SessionProgress(), uint32_t timeout_override_ms = 0);
-    EJODIN4_Status begin(std::vector<EJODIN4_PitEntry>& live_pit, std::string& error, uint64_t planned_total = 0, const FirmwareIdentity* identity = 0);
+    EJODIN4_Status begin(std::vector<EJODIN4_PitEntry>& live_pit, std::string& error, uint64_t planned_total = 0, const FirmwareIdentity* identity = 0,
+        const std::vector<uint8_t>* repartition_pit = 0);
     EJODIN4_Status notify_total(uint64_t total, std::string& error);
     EJODIN4_Status validate_image(const PlanImage&, std::string&);
     bool compression_supported() const;
@@ -49,5 +51,7 @@ public:
     const SessionState& state() const { return state_; }
     const std::vector<uint8_t>& pit_bytes() const { return pit_bytes_; }
 };
+// Shared eligibility check usable before a repartition side effect.
+bool stock_image_route_supported(const EJODIN4_PitEntry&);
 }
 #endif

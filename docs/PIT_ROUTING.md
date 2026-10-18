@@ -1,6 +1,6 @@
 # Firmware-independent PIT routing
 
-For the difference between metadata-only reference PIT handling and native Odin's partition-table upload, see the [REPARTITION audit](REPARTITION_AUDIT.md).
+For explicit PIT upload and read-back verification in ABI 1.12, see [repartition usage](REPARTITION.md). The [historical REA audit](REPARTITION_AUDIT.md) explains the native reference behavior. Metadata-only PIT references remain distinct from upload targets.
 
 Firmware eligibility does not depend on a known model, firmware release name, package-PIT fingerprint or VENDOR_BOOT digest. Image hashes still protect the actual selected archive between validation and transfer; they are computed from that input and are not compared with a firmware allowlist.
 
@@ -10,7 +10,7 @@ The automatic path first requires matching logical package/live PIT bytes, exclu
 
 This is the Samsung PIT storage-type convention. Independent multi-device evidence is recorded in [postmarketOS pmaports merge request 5365](https://gitlab.com/postmarketOS/pmaports/-/merge_requests/5365), where the maintainer derives partition sizes from PIT storage type and block count across several devices. This evidence supports the implemented convention; it is not a live READ CAPACITY measurement or proof for every possible Samsung addressing scheme. The overloaded PIT block-size/offset field is not treated as an independent sector-size measurement; see [Heimdall's PIT definition](https://github.com/Benjamin-Dobell/Heimdall/blob/master/libpit/source/libpit.h).
 
-The shared C contract is ABI 1.11 (65547), with unchanged 64/537/68-byte request/progress/result records. Mixed MMC/UFS plans use units per selected partition. Their result has logical_sector_bytes=0 and, for WRITE, EJODIN4_FLASH_PER_PARTITION_PIT_UNITS (32), rather than reporting a false common unit. Homogeneous plans report their common unit. Unknown storage types remain unsupported by this capacity validator. A zero block count does not establish capacity; USERDATA requires independently supplied capacity rather than an invented minimum. That capacity must align to the selected unit and cannot contradict a positive live PIT capacity; other zero-count destinations remain rejected. Selected-slot policy still excludes USERDATA, MISC and OMR.
+The C contract is ABI 1.12 (65548), with unchanged 64/537/68-byte request/progress/result records. Mixed MMC/UFS plans use units per selected partition. Their result has logical_sector_bytes=0 and, for WRITE/REPARTITION, EJODIN4_FLASH_PER_PARTITION_PIT_UNITS (32), rather than reporting a false common unit. Homogeneous plans report their common unit. Unknown storage types remain unsupported by this capacity validator. A zero block count does not establish capacity; USERDATA requires independently supplied capacity rather than an invented minimum. That capacity must align to the selected unit and cannot contradict a positive live PIT capacity; other zero-count destinations remain rejected. Selected-slot policy still excludes USERDATA, MISC and OMR.
 
 ## Native Odin observations
 

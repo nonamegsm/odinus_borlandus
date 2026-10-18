@@ -771,6 +771,18 @@ public:
     }
 };
 }
+EJODIN4_Status load_target_pit(const EJODIN4_FirmwareFile& source,const Cancellation& cancel,
+    std::vector<uint8_t>& output,std::string& error) {
+    output.clear();
+    try {
+        std::vector<uint8_t> bytes=external_pit(native_path(source.path,source.path_bytes),::Cancellation(cancel.callback,cancel.context));
+        std::vector<EJODIN4_PitEntry> entries(512);uint32_t count=0;char text[256]={0};
+        const EJODIN4_Status status=EJODIN4_ParsePit(&bytes[0],uint32_t(bytes.size()),&entries[0],512,&count,text,sizeof(text));
+        if(status!=EJODIN4_OK){error=std::string("Target PIT rejected: ")+text;return status;}
+        output.swap(bytes);return EJODIN4_OK;
+    } catch(const Failure& failure){error=failure.message;return failure.status;}
+    catch(...){error="Cannot snapshot raw target PIT";return EJODIN4_INTERNAL_ERROR;}
+}
 EJODIN4_Status open_held_archive(const EJODIN4_FirmwareFile& source,
     const Cancellation& cancel, std::unique_ptr<HeldArchive>& output, std::string& error,
     const ArchiveScanCallback& progress) {
