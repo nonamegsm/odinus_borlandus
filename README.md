@@ -56,7 +56,7 @@ The native stock-driver path uses the reviewed negotiation/framing sequence, exa
 
 A fully acknowledged and finalized stock-driver flash whose separate reboot confirmation fails is reported as completed with a warning; the reboot flag remains unconfirmed. Incomplete writes, failed finalization, unexpected replies, invalid metadata and cancellation remain errors. The user reported successful flashing and normal Android startup with the EasyJTAG implementation; this native Borland synchronization has not been physically flashed.
 
-See tests/ and docs/VERIFICATION.md for repeatable validation and its limits.
+See [protocol versions](docs/PROTOCOL_VERSIONS.md) for the support matrix, negotiation, framing and coverage. See tests/ and docs/VERIFICATION.md for repeatable validation and its limits.
 
 ## Tests
 
