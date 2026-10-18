@@ -1,9 +1,24 @@
 {
   "sync": {
-    "date": "2026-10-17",
-    "easyjtag_revision": "4822cce0370f61254f151e93cb83fba9adb2e78b",
-    "bcc_base_revision": "e75012c",
-    "native_checks_per_configuration": 11407668,
+    "date": "2026-10-18",
+    "easyjtag_revision": "9718301339e47ad7fb578e250a2350f34e34d964",
+    "bcc_base_revision": "b45304035bc38de903cd30ebe503c19d082923a3",
+    "easyjtag_worktree_inputs": [
+      {
+        "file": "src/android_info/Odin4Runtime.h",
+        "sha256": "a9ddae1f05a7f5ba008a1b15d17498b9cbd025a3e53aa1b4f29345ae6c45c60c"
+      },
+      {
+        "file": "src/android_info/OperationLog.h",
+        "sha256": "2b12e3712531b92e51df145a214605a45b2f5eaf656ce35fdf3feafe313d5995"
+      },
+      {
+        "file": "src/AndroidInfoToolPage.cpp",
+        "sha256": "08c860cc24ae4032032476c97c65daa408e8eadcba8b11af90567ec1a250dbf5"
+      }
+    ],
+    "native_checks_per_configuration": 11407664,
+    "logger_checks_per_configuration": 234,
     "manifest_regressions": 7,
     "physical_device_operations": 0,
     "abi_version": 65547,
@@ -11,14 +26,17 @@
       "2": 512,
       "8": 4096
     },
-    "mixed_units_result_flag": 32
+    "mixed_units_result_flag": 32,
+    "engine_protocol_changes": false,
+    "engine_linkage": "native classic BCC32 static executable",
+    "dll_lifetime_fix": "not applicable: engine is linked into the executable"
   },
   "configurations": {
     "Debug": {
       "executable": {
         "file": "OdinBCC.exe",
-        "sha256": "c14f5d3c6b7380ecf8f3da28ba8aa482d59cf26943c66dd774aa6ac006c92c04",
-        "bytes": 873472
+        "sha256": "9403eadb9b70e88a1835bff2ed3a833a578c4cec8d907e7ba1e1355a083a485b",
+        "bytes": 877568
       },
       "objects": 16,
       "imports": [
@@ -39,7 +57,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "PASS native classic BCC core: 832 checks; no DLL loads or device I/O\n",
-          "seconds": 0.589
+          "seconds": 0.512
         },
         {
           "target": "native_archive_tests",
@@ -48,7 +66,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "PASS native classic BCC archive: 173 checks; no DLL or device I/O\n",
-          "seconds": 0.637
+          "seconds": 0.615
         },
         {
           "target": "native_streaming_tests",
@@ -56,8 +74,8 @@
           "static_engine_objects": 15,
           "private_dll": false,
           "exit_code": 0,
-          "output": "native streaming: 845 checks passed\n",
-          "seconds": 2.122
+          "output": "native streaming: 841 checks passed\n",
+          "seconds": 1.981
         },
         {
           "target": "native_session_tests",
@@ -66,7 +84,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "Native BCC session fake tests passed (11405308 checks)\n",
-          "seconds": 6.868
+          "seconds": 6.317
         },
         {
           "target": "native_transport_tests",
@@ -75,7 +93,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "Native BCC fake USB transport tests passed: 299 checks\n",
-          "seconds": 0.408
+          "seconds": 0.399
         },
         {
           "target": "native_firmware_identity_tests",
@@ -84,7 +102,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "Signed manifest tests passed: 112 checks; no manufacturer-private-key fixture is available.\n",
-          "seconds": 0.982
+          "seconds": 0.855
         },
         {
           "target": "native_device_info_tests",
@@ -93,7 +111,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "PASS DEVINFO parser/policy: 21 checks; no device I/O\n",
-          "seconds": 0.294
+          "seconds": 0.288
         },
         {
           "target": "ui_logic_tests",
@@ -102,14 +120,23 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "PASS BCC UI logic: 78 checks; no device I/O\n",
-          "seconds": 0.28
+          "seconds": 0.273
         }
       ],
+      "nativeChecks": 11407664,
+      "loggerTests": {
+        "configuration": "Debug",
+        "returncode": 0,
+        "hardware_io": false,
+        "output": "Session log: 234 checks, 0 failures\n"
+      },
+      "loggerChecks": 234,
       "uiCases": [
         "copied EXE starts standalone with native engine and no private DLL",
         "six native checked slots retain paths, toggle input state without work; system RichEdit active",
         "all off and conflicting metadata reject before worker; required policy never silently changes",
         "blank archive selection rejected before worker",
+        "timestamped durable worker result and GUI completion markers persist once; concise UI unchanged",
         "nonexistent firmware file returns failure and restores controls",
         "offline cancellation retains unchecked CSC and duplicate USERDATA paths with inputs disabled after join",
         "offline verification cancellation drains and restores controls"
@@ -119,8 +146,8 @@
     "Release": {
       "executable": {
         "file": "OdinBCC.exe",
-        "sha256": "51c3fc3dc4a7b4f2c1fb1124acb646218298f6c03cc7b9feab09368be46030a2",
-        "bytes": 2170880
+        "sha256": "bf3a369c2ef886bb2b75215a8028ee6d849a3e5c8fe63fe791850d65c6145d5c",
+        "bytes": 2209280
       },
       "objects": 16,
       "imports": [
@@ -141,7 +168,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "PASS native classic BCC core: 832 checks; no DLL loads or device I/O\n",
-          "seconds": 0.55
+          "seconds": 0.471
         },
         {
           "target": "native_archive_tests",
@@ -150,7 +177,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "PASS native classic BCC archive: 173 checks; no DLL or device I/O\n",
-          "seconds": 0.933
+          "seconds": 0.548
         },
         {
           "target": "native_streaming_tests",
@@ -158,8 +185,8 @@
           "static_engine_objects": 15,
           "private_dll": false,
           "exit_code": 0,
-          "output": "native streaming: 845 checks passed\n",
-          "seconds": 2.408
+          "output": "native streaming: 841 checks passed\n",
+          "seconds": 1.841
         },
         {
           "target": "native_session_tests",
@@ -168,7 +195,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "Native BCC session fake tests passed (11405308 checks)\n",
-          "seconds": 6.891
+          "seconds": 6.207
         },
         {
           "target": "native_transport_tests",
@@ -177,7 +204,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "Native BCC fake USB transport tests passed: 299 checks\n",
-          "seconds": 0.376
+          "seconds": 0.363
         },
         {
           "target": "native_firmware_identity_tests",
@@ -186,7 +213,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "Signed manifest tests passed: 112 checks; no manufacturer-private-key fixture is available.\n",
-          "seconds": 0.82
+          "seconds": 0.689
         },
         {
           "target": "native_device_info_tests",
@@ -195,7 +222,7 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "PASS DEVINFO parser/policy: 21 checks; no device I/O\n",
-          "seconds": 0.645
+          "seconds": 0.277
         },
         {
           "target": "ui_logic_tests",
@@ -204,14 +231,23 @@
           "private_dll": false,
           "exit_code": 0,
           "output": "PASS BCC UI logic: 78 checks; no device I/O\n",
-          "seconds": 0.353
+          "seconds": 0.256
         }
       ],
+      "nativeChecks": 11407664,
+      "loggerTests": {
+        "configuration": "Release",
+        "returncode": 0,
+        "hardware_io": false,
+        "output": "Session log: 234 checks, 0 failures\n"
+      },
+      "loggerChecks": 234,
       "uiCases": [
         "copied EXE starts standalone with native engine and no private DLL",
         "six native checked slots retain paths, toggle input state without work; system RichEdit active",
         "all off and conflicting metadata reject before worker; required policy never silently changes",
         "blank archive selection rejected before worker",
+        "timestamped durable worker result and GUI completion markers persist once; concise UI unchanged",
         "nonexistent firmware file returns failure and restores controls",
         "offline cancellation retains unchecked CSC and duplicate USERDATA paths with inputs disabled after join",
         "offline verification cancellation drains and restores controls",
@@ -225,6 +261,13 @@
       "manifestSnapshotVerified": true
     }
   },
+  "ideEntryPoints": [
+    {
+      "ide_selection": "Base",
+      "native_configuration": "Debug",
+      "exit_code": 0
+    }
+  ],
   "physicalDeviceOperations": 0,
   "realOfflinePlan": {
     "images": 26,
@@ -238,8 +281,8 @@
   },
   "portable": {
     "path": "dist/OdinBCC.exe",
-    "sha256": "51c3fc3dc4a7b4f2c1fb1124acb646218298f6c03cc7b9feab09368be46030a2",
-    "bytes": 2170880
+    "sha256": "bf3a369c2ef886bb2b75215a8028ee6d849a3e5c8fe63fe791850d65c6145d5c",
+    "bytes": 2209280
   },
   "limits": [
     "No connected phone was enumerated, probed, read or flashed.",

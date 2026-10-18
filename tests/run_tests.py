@@ -29,6 +29,7 @@ def main():
     run([sys.executable,TESTS/'build_output_tests.py'])
     if args.build_app:
         run([sys.executable,ROOT/'build.py','--configuration',args.configuration,'--bds',args.bds],ROOT)
+    run([sys.executable,TESTS/'run_session_log_tests.py','--configuration',args.configuration,'--bds',args.bds])
     executable=build.verified_output(args.configuration)
     native=[sys.executable,TESTS/'native_tests.py','--configuration',args.configuration,'--bds',args.bds]
     if args.reviewed_pit: native+=['--reviewed-pit',args.reviewed_pit]

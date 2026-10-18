@@ -1,5 +1,7 @@
 # Native Borland verification
 
+The latest application-side logging/lifetime sync is documented in [2026-10-18 synchronization](2026-10-18-sync.md). Native logs are now flushed directly by workers, with timestamps and file-only GUI completion markers. The engine remains linked into the EXE; EasyJTAG's MinGW DLL-unload correction requires no equivalent engine-loader change here. The test runner adds 234 native logger checks per configuration to the eight engine/UI-logic suites described below.
+
 Current firmware-independent PIT behavior is recorded in [PIT routing](PIT_ROUTING.md). The results below verify the rebuilt generic implementation; earlier reviewed-firmware profiles are no longer eligibility gates.
 
 ## Build and deployment
@@ -16,13 +18,15 @@ All eight suites pass against the rebuilt negotiated-protocol implementation in 
 | --- | ---: |
 | Wire/PIT/trailer core | 832 |
 | TAR/MD5/LZ4/archive validation | 173 |
-| Streaming, hashes, sparse geometry and generic PIT units | 845 |
+| Streaming, hashes, sparse geometry and generic PIT units | 841 |
 | Protocol session and integrated flash-operation composition | 11405308 |
 | Fake USB and pending-I/O transport | 299 |
 | C++03 UI progress/result/severity decisions | 78 |
 | Manufacturer signature/parser | 112 |
 | DEVINFO identity/policy | 21 |
-| Total | 11407668 |
+| Total | 11407664 |
+
+These totals are for the default run. Supplying the optional real package-PIT test input adds four streaming checks, as in the earlier verification snapshot.
 
 Coverage includes exact request goldens, malformed and full-width PIT entries, archive corruption, source checksums, Unicode paths, held-file protection, decoded limits, 8 GiB sparse geometry, ordered repeated writes, protected partitions, second-pass digest checks, callbacks, partial transfers, >4 GiB counters, ACK errors, timeout defaults/overrides, cancellation and checked finalization. Integrated PIT-read tests cover native cleanup failures and throwing callbacks without image writes. SDK structure-size/offset probes also pass with BCC.
 

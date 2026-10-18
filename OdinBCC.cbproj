@@ -54,6 +54,7 @@
     <None Include="engine\src\Odin4FirmwareIdentity.h"/>
     <None Include="engine\src\Odin4DeviceInfo.h"/><CppCompile Include="engine\vendor\lz4\*.c"/>
     <None Include="src\UiLogic.h"/>
+    <None Include="src\SessionLog.h"/>
     <None Include="build.py"/><None Include="build.ps1"/>
     <None Include="README.md"/>
     <BuildConfiguration Include="Base"><Key>Base</Key></BuildConfiguration>

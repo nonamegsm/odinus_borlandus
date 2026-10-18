@@ -9,3 +9,5 @@ PIT capacity validation is firmware-independent: eMMC type 2 uses 512-byte units
 Native Debug/Release tests and owned-window offline firmware-plan checks pass. This native Borland build has not been physically flashed; the user-reported successful EasyJTAG flash is separate evidence.
 
 Rebuild from the source project with build.ps1 or OdinBCC.cbproj. build-manifest.json records the shipped executable, compiler, source/header/object hashes, notices and Windows imports.
+
+The 2026-10-18 application sync adds timestamped UTF-8 session logs, flushed directly by workers before GUI messages. Completion/join markers are file-only, and GUI processing does not duplicate saved messages. The engine remains statically linked; EasyJTAG's MinGW DLL-unload correction needs no equivalent DLL pin in this executable. Close the app before replacing the portable EXE.

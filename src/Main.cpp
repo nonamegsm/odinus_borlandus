@@ -15,6 +15,7 @@
 #define EJ_ODIN4_CORE_STATIC
 #include "../include/EasyJtagOdin4Core.h"
 #include "UiLogic.h"
+#include "SessionLog.h"
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "comdlg32.lib")
@@ -38,7 +39,7 @@ static HFONT uiFont,titleFont;static bool engine=false;static HANDLE worker;
 static EnumFn enumDevices;static ProbeFn probeDevice;static InspectFn inspectArchive;static FlashFn flashFirmware;
 static CRITICAL_SECTION progressLock;static EJODIN4_FlashProgress latestProgress;static bool progressPending=false;static bool progressRebootPending=false;
 static volatile LONG cancelFlag=0;static bool busy=false,closing=false;static std::vector<EJODIN4_UsbDevice> devices;
-static std::wstring baseDirectory;static std::wstring logFilename;static FILE* sessionLog=0;
+static std::wstring baseDirectory;static std::wstring logFilename;static OdinLog::SessionLog sessionLog;static bool logFailureReported=false;
 static const UINT WM_LOG_LINE=WM_APP+1,WM_FINISHED=WM_APP+2;
 static const int ID_REFRESH=201,ID_PROBE=202,ID_PLAN=203,ID_PIT=204,ID_FLASH=205,ID_CANCEL=206,ID_SAVE=207;
 
@@ -58,9 +59,10 @@ static void appendSpan(const std::wstring& value,COLORREF colour,bool bold){
     if(richLog){CHARFORMATW format;ZeroMemory(&format,sizeof(format));format.cbSize=sizeof(format);format.dwMask=CFM_COLOR|CFM_BOLD;format.crTextColor=colour;format.dwEffects=bold?CFE_BOLD:0;SendMessageW(logBox,EM_SETCHARFORMAT,SCF_SELECTION,(LPARAM)&format);}
     SendMessageW(logBox,EM_REPLACESEL,FALSE,(LPARAM)value.c_str());
 }
-static void appendLog(const std::wstring& text,bool visible=true){
+static void appendLog(const std::wstring& text,bool visible=true,bool persist=true){
     std::wstring line=text+L"\r\n";
-    if(sessionLog){std::string bytes=utf8(line);fwrite(bytes.c_str(),1,bytes.size(),sessionLog);fflush(sessionLog);}
+    if(persist)sessionLog.Append(text);
+    if(sessionLog.Failed()&&!logFailureReported){logFailureReported=true;appendLog(L"Warning: cannot write the session log in the executable's logs folder.",true,false);}
     if(!visible)return;
     int len=GetWindowTextLengthW(logBox);if(len>500000){SendMessageW(logBox,EM_SETSEL,0,100000);SendMessageW(logBox,EM_REPLACESEL,FALSE,(LPARAM)L"");}
     SendMessageW(logBox,EM_SETSEL,(WPARAM)-1,(LPARAM)-1);
@@ -75,7 +77,7 @@ static void appendLog(const std::wstring& text,bool visible=true){
     else appendSpan(line,colour,bold);
     SendMessageW(logBox,EM_SCROLLCARET,0,0);
 }
-static void postLine(const std::string& text,bool detail){std::wstring* value=new std::wstring(widen(text));if(!PostMessageW(mainWindow,WM_LOG_LINE,detail?1:0,(LPARAM)value))delete value;}
+static void postLine(const std::string& text,bool detail){std::wstring* value=new std::wstring(widen(text));sessionLog.Append(*value);if(!PostMessageW(mainWindow,WM_LOG_LINE,detail?1:0,(LPARAM)value))delete value;}
 static void postLog(const std::string& text){postLine(text,false);}
 static void postDetail(const std::string& text){postLine(text,true);}
 static int32_t __cdecl cancelled(void*){return InterlockedCompareExchange(&cancelFlag,0,0)?1:0;}
@@ -175,6 +177,7 @@ static void resolveReference(std::vector<File>& files,uint32_t policy){
 }
 static unsigned __stdcall runWorker(void* parameter){
     Job* job=(Job*)parameter;Finished* done=new Finished;done->action=job->action;char error[2048]={0};
+    sessionLog.Append(L"Backend started");
     try{
         if(job->action==ID_REFRESH){std::vector<EJODIN4_UsbDevice> list(128);uint32_t count=0;EJODIN4_Status s=enumDevices(&list[0],128,&count,cancelled,0,error,sizeof(error));if(s!=EJODIN4_OK)throw std::runtime_error(error);if(count>128)throw std::runtime_error("Too many Download devices");list.resize(count);for(size_t di=0;di<list.size();++di){widen(bounded(list[di].device_path,sizeof(list[di].device_path)));widen(bounded(list[di].description,sizeof(list[di].description)));widen(bounded(list[di].driver,sizeof(list[di].driver)));}done->devices.swap(list);done->success=true;done->message="Device list refreshed. Select a supported interface explicitly.";}
         else if(job->action==ID_PROBE){EJODIN4_DownloadProbe p;ZeroMemory(&p,sizeof(p));EJODIN4_Status s=probeDevice(job->device.c_str(),(uint32_t)job->device.size()+1,30000,&p,cancelled,0,error,sizeof(error));if(s!=EJODIN4_OK)throw std::runtime_error(error);done->success=p.handshake_complete!=0;done->message=done->success?"ODIN / LOKE handshake confirmed. No firmware session started.":"Handshake was not confirmed.";}
@@ -206,7 +209,15 @@ static unsigned __stdcall runWorker(void* parameter){
 
         }
     }catch(const std::exception& e){done->message=e.what();}catch(...){done->message="Unexpected operation exception";}
-    delete job;PostMessageW(mainWindow,WM_FINISHED,0,(LPARAM)done);return 0;
+    // Persist the final result before notifying the GUI or exiting this worker.
+    try{
+    if(!done->summary.empty())sessionLog.Append(widen(done->summary));
+    sessionLog.Append((done->success?L"SUCCESS: ":L"FAILED: ")+widen(done->message));
+    if(!done->pitUnitsNotice.empty())sessionLog.Append(widen(done->pitUnitsNotice));
+    if(!done->warning.empty())sessionLog.Append(widen(done->warning));
+    sessionLog.Append(done->success?L"Backend completed successfully":L"Backend completed with failure or cancellation");
+    }catch(...){sessionLog.Append(L"Warning: backend completion could not be encoded for the session log");}
+    delete job;if(!PostMessageW(mainWindow,WM_FINISHED,0,(LPARAM)done))delete done;return 0;
 }
 static void setBusy(bool value){busy=value;for(int i=0;i<6;++i){const bool checked=SendMessageW(labels[i],BM_GETCHECK,0,0)==BST_CHECKED;EnableWindow(labels[i],!value);EnableWindow(paths[i],!value&&checked);EnableWindow(browseButtons[i],!value&&checked);EnableWindow(clearButtons[i],!value&&checked);}for(int i=0;i<7;++i)EnableWindow(actions[i],engine&&(i==5?value:!value));EnableWindow(deviceBox,!value);EnableWindow(policyBox,!value);EnableWindow(rebootBox,!value);}
 static uint32_t selectedPolicy(){int n=(int)SendMessageW(policyBox,CB_GETCURSEL,0,0);return n==1?EJODIN4_PRESERVE_DATA:n==2?EJODIN4_CLEAN_INSTALL:EJODIN4_UPDATE_SELECTED;}
@@ -271,21 +282,22 @@ static LRESULT CALLBACK windowProcedure(HWND window,UINT msg,WPARAM wp,LPARAM lp
     case WM_GETMINMAXINFO:{MINMAXINFO* m=(MINMAXINFO*)lp;m->ptMinTrackSize.x=1040;m->ptMinTrackSize.y=760;return 0;}
     case WM_COMMAND:{int id=LOWORD(wp);if(id>=400&&id<406&&!busy){setBusy(false);return 0;}if(id>=300&&id<306&&!busy&&SendMessageW(labels[id-300],BM_GETCHECK,0,0)==BST_CHECKED){browse(id-300);return 0;}if(id>=310&&id<316&&!busy&&SendMessageW(labels[id-310],BM_GETCHECK,0,0)==BST_CHECKED){SetWindowTextW(paths[id-310],L"");return 0;}if(id==ID_CANCEL){if(busy&&InterlockedExchange(&cancelFlag,1)==0){appendLog(L"Cancellation requested. Waiting for engine/driver to release the session safely.");SetWindowTextW(statusText,L"Cancelling...");}return 0;}if(id==ID_SAVE&&!busy){saveLog();return 0;}if(id>=ID_REFRESH&&id<=ID_FLASH){beginOperation(id);return 0;}break;}
     case WM_TIMER:updateProgress();if(closing&&!busy)DestroyWindow(window);return 0;
-    case WM_LOG_LINE:{std::wstring* s=(std::wstring*)lp;appendLog(*s,wp==0);delete s;return 0;}
-    case WM_FINISHED:{Finished* done=(Finished*)lp;updateProgress();if(worker){WaitForSingleObject(worker,INFINITE);CloseHandle(worker);worker=0;}setBusy(false);
+    case WM_LOG_LINE:{std::wstring* s=(std::wstring*)lp;appendLog(*s,wp==0,false);delete s;return 0;}
+    case WM_FINISHED:{Finished* done=(Finished*)lp;sessionLog.Append(L"GUI completion: processing pending updates");updateProgress();sessionLog.Append(L"GUI completion: joining worker");if(worker){WaitForSingleObject(worker,INFINITE);CloseHandle(worker);worker=0;}sessionLog.Append(L"GUI completion: worker joined");
         if(done->action==ID_REFRESH&&done->success){devices.swap(done->devices);SendMessageW(deviceBox,CB_RESETCONTENT,0,0);for(size_t i=0;i<devices.size();++i){if(!OdinUi::supported(devices[i].flags)||!devices[i].device_path[0])continue;std::string d=bounded(devices[i].description,sizeof(devices[i].description));d+=" | "+bounded(devices[i].driver,sizeof(devices[i].driver));const LRESULT item=SendMessageW(deviceBox,CB_ADDSTRING,0,(LPARAM)widen(d).c_str());if(item>=0)SendMessageW(deviceBox,CB_SETITEMDATA,(WPARAM)item,(LPARAM)i);}SendMessageW(deviceBox,CB_SETCURSEL,(WPARAM)-1,0);}
-        if(!done->summary.empty())appendLog(widen(done->summary));
-        appendLog((done->success?L"SUCCESS: ":L"FAILED: ")+widen(done->message));if(!done->pitUnitsNotice.empty())appendLog(widen(done->pitUnitsNotice));if(!done->warning.empty())appendLog(widen(done->warning));SetWindowTextW(statusText,widen(done->message).c_str());if(done->success&&(done->action==ID_PLAN||done->action==ID_FLASH)){SendMessageW(overallBar,PBM_SETPOS,1000,0);if(done->action==ID_FLASH)SendMessageW(imageBar,PBM_SETPOS,1000,0);}delete done;return 0;}
+        sessionLog.Append(L"GUI completion: displaying result");
+        if(!done->summary.empty())appendLog(widen(done->summary),true,false);
+        appendLog((done->success?L"SUCCESS: ":L"FAILED: ")+widen(done->message),true,false);if(!done->pitUnitsNotice.empty())appendLog(widen(done->pitUnitsNotice),true,false);if(!done->warning.empty())appendLog(widen(done->warning),true,false);SetWindowTextW(statusText,widen(done->message).c_str());if(done->success&&(done->action==ID_PLAN||done->action==ID_FLASH)){SendMessageW(overallBar,PBM_SETPOS,1000,0);if(done->action==ID_FLASH)SendMessageW(imageBar,PBM_SETPOS,1000,0);}sessionLog.Append(L"GUI completion: releasing worker result");delete done;sessionLog.Append(L"GUI completion: restoring controls");setBusy(false);sessionLog.Append(L"GUI completion: finished");return 0;}
     case WM_CLOSE:if(busy){closing=true;InterlockedExchange(&cancelFlag,1);SetWindowTextW(statusText,L"Closing after safe cancellation completes...");return 0;}DestroyWindow(window);return 0;
     case WM_DESTROY:KillTimer(window,1);PostQuitMessage(0);return 0;}
     return DefWindowProcW(window,msg,wp,lp);
 }
 int WINAPI WinMain(HINSTANCE instance,HINSTANCE,LPSTR,int show){
     wchar_t exe[32768];DWORD n=GetModuleFileNameW(0,exe,32768);if(!n||n>=32768)return 2;baseDirectory=exe;size_t slash=baseDirectory.find_last_of(L"\\/");baseDirectory=baseDirectory.substr(0,slash+1);
-    CreateDirectoryW((baseDirectory+L"logs").c_str(),0);SYSTEMTIME now;GetLocalTime(&now);wchar_t name[160];swprintf(name,L"logs\\odin-%04u%02u%02u-%02u%02u%02u-%lu.log",now.wYear,now.wMonth,now.wDay,now.wHour,now.wMinute,now.wSecond,(unsigned long)GetCurrentProcessId());logFilename=baseDirectory+name;sessionLog=_wfopen(logFilename.c_str(),L"wb");InitializeCriticalSection(&progressLock);
+    CreateDirectoryW((baseDirectory+L"logs").c_str(),0);SYSTEMTIME now;GetLocalTime(&now);wchar_t name[160];swprintf(name,L"logs\\odin-%04u%02u%02u-%02u%02u%02u-%03u-%lu.log",now.wYear,now.wMonth,now.wDay,now.wHour,now.wMinute,now.wSecond,now.wMilliseconds,(unsigned long)GetCurrentProcessId());logFilename=baseDirectory+name;sessionLog.Open(logFilename);InitializeCriticalSection(&progressLock);
     INITCOMMONCONTROLSEX controls;controls.dwSize=sizeof(controls);controls.dwICC=ICC_PROGRESS_CLASS|ICC_STANDARD_CLASSES;InitCommonControlsEx(&controls);
     WNDCLASSEXW cls;ZeroMemory(&cls,sizeof(cls));cls.cbSize=sizeof(cls);cls.lpfnWndProc=windowProcedure;cls.hInstance=instance;cls.hCursor=LoadCursor(0,IDC_ARROW);cls.hIcon=LoadIcon(0,IDI_APPLICATION);cls.hbrBackground=(HBRUSH)(COLOR_WINDOW+1);cls.lpszClassName=L"OdinBCCMainWindow";RegisterClassExW(&cls);
-    HWND window=CreateWindowExW(0,cls.lpszClassName,L"Odin BCC - Samsung Firmware",WS_OVERLAPPEDWINDOW,80,60,1140,840,0,0,instance,0);if(!window){if(sessionLog)fclose(sessionLog);DeleteCriticalSection(&progressLock);return 3;}ShowWindow(window,show);UpdateWindow(window);
+    HWND window=CreateWindowExW(0,cls.lpszClassName,L"Odin BCC - Samsung Firmware",WS_OVERLAPPEDWINDOW,80,60,1140,840,0,0,instance,0);if(!window){sessionLog.Close();DeleteCriticalSection(&progressLock);return 3;}ShowWindow(window,show);UpdateWindow(window);
     MSG msg;while(GetMessageW(&msg,0,0,0)>0){if(!IsDialogMessageW(window,&msg)){TranslateMessage(&msg);DispatchMessageW(&msg);}}
-    if(sessionLog)fclose(sessionLog);DeleteObject(uiFont);DeleteObject(titleFont);if(richEditModule)FreeLibrary(richEditModule);DeleteCriticalSection(&progressLock);return (int)msg.wParam;
+    sessionLog.Append(L"Application shutdown completed");sessionLog.Close();DeleteObject(uiFont);DeleteObject(titleFont);if(richEditModule)FreeLibrary(richEditModule);DeleteCriticalSection(&progressLock);return (int)msg.wParam;
 }

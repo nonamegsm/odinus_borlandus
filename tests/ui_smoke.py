@@ -4,6 +4,7 @@ import ctypes as C
 from ctypes import wintypes as W
 import io
 import json
+import re
 from pathlib import Path
 import shutil
 import struct
@@ -248,6 +249,16 @@ def main():
             wait_for(lambda:'FAILED:' in ui.log() and U.IsWindowEnabled(ui.control(203)))
             assert not U.IsWindowEnabled(ui.control(206))
             assert 'any write: yes' not in ui.full_log()
+            failure_log=ui.full_log()
+            assert re.search(r'^\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] ',failure_log,re.M)
+            for marker in ('Backend started','Backend completed with failure or cancellation',
+                           'GUI completion: joining worker','GUI completion: worker joined',
+                           'GUI completion: releasing worker result','GUI completion: restoring controls',
+                           'GUI completion: finished'):
+                assert marker in failure_log, marker
+                assert marker not in ui.log(), 'technical lifecycle markers stay file-only'
+            assert failure_log.count('FAILED: ')==ui.log().count('FAILED: '), 'GUI must not duplicate worker completion records'
+            results['cases'].append('timestamped durable worker result and GUI completion markers persist once; concise UI unchanged')
             results['cases'].append('nonexistent firmware file returns failure and restores controls')
             # A private plain TAR is hashed/decoded only; there is no device path.
             archive=scratch/'cancel-fixture.tar'
@@ -262,6 +273,10 @@ def main():
             wait_for(lambda:ui.log().count('FAILED:')>before and U.IsWindowEnabled(ui.control(203)))
             assert 'Cancellation requested.' in ui.log()
             assert 'cancel' in text(ui.control(165)).lower()
+            cancelled_log=ui.full_log()
+            assert 'Backend completed with failure or cancellation' in cancelled_log
+            assert cancelled_log.count('FAILED: ')==ui.log().count('FAILED: ')
+            assert cancelled_log.rfind('GUI completion: finished')>cancelled_log.rfind('Cancellation requested.')
             assert not U.IsWindowEnabled(ui.control(206))
             assert 'Refresh devices ---' not in ui.log()
             assert 'unmeasured' not in ui.log(), 'Automatic Samsung PIT units must not produce an unknown-capacity warning'
