@@ -1,0 +1,233 @@
+{
+  "date": "2026-10-18",
+  "source_revision": "f9aeb51",
+  "target_relative_path": "Odin3_v3.14.4/Odin3_v3.14.4.exe",
+  "target_sha256_before_and_after": "aa17ccf37d52c816bcea6e54dbdd6daf90fe2ac984641d01034ade77ff9dcb41",
+  "target_executed": false,
+  "phone_io": false,
+  "owned_rea_session_closed": true,
+  "rea_version": "6.4.0",
+  "analysis_profile_digest": "91cadbe80af20210d042625d50c08a532afe4fd5e28466dfecc4df0cc6578b6c",
+  "close_result": {
+    "result": null
+  },
+  "evidence_selection": "Complete unchanged REA records selected from the exported session bundle; other exploratory records omitted.",
+  "records": [
+    {
+      "label": "ini-options",
+      "evidence_id": "ev_d8e8f1c8d7e9c85356f3b6f4221543cf7cb44ac368387445521da7a89bc00597",
+      "operation": "procedure_pseudo_code",
+      "parameters": {
+        "procedure": "0x424e00"
+      }
+    },
+    {
+      "label": "manual-pit-picker",
+      "evidence_id": "ev_8ccfe78164b7e5a5e737bea4cc9d0be13db2002d47c3b9b03236b57dcefd1d61",
+      "operation": "procedure_pseudo_code",
+      "parameters": {
+        "procedure": "0x41ee57"
+      }
+    },
+    {
+      "label": "ui-start-request",
+      "evidence_id": "ev_7404ddc7567dc99b1a1620bbd59a57490b675e02398c9aed4fce88903c24a9cd",
+      "operation": "procedure_pseudo_code",
+      "parameters": {
+        "procedure": "0x41ebd3"
+      }
+    },
+    {
+      "label": "request-copy",
+      "evidence_id": "ev_cb7228d89be0eedf46908e89165f937a305979147e4ef40c3a33590b559f604a",
+      "operation": "procedure_pseudo_code",
+      "parameters": {
+        "procedure": "0x42e3c0"
+      }
+    },
+    {
+      "label": "start-download-options",
+      "evidence_id": "ev_71e0f661c4d16b7bea5d5214829e1a710751c7bca9181163de766711ba5eb505",
+      "operation": "procedure_pseudo_code",
+      "parameters": {
+        "procedure": "0x429291"
+      }
+    },
+    {
+      "label": "download-thread",
+      "evidence_id": "ev_1a9eb48644bf925b0383c74f28027582d4d8c418da91729a2c55e7316dada152",
+      "operation": "procedure_pseudo_code",
+      "parameters": {
+        "procedure": "0x43779f"
+      }
+    },
+    {
+      "label": "file-analysis",
+      "evidence_id": "ev_16cc962a9627096432443805994294809e9f56f8072eb9af9a93525daa3854c2",
+      "operation": "procedure_pseudo_code",
+      "parameters": {
+        "procedure": "0x434170"
+      }
+    },
+    {
+      "label": "tar-parser",
+      "evidence_id": "ev_3db1ab5e6de0e308d39043f92cc4682a15039a937560a3814d80d1a2dabfd5d5",
+      "operation": "procedure_pseudo_code",
+      "parameters": {
+        "procedure": "0x42ef40"
+      }
+    },
+    {
+      "label": "tar-member-selector",
+      "evidence_id": "ev_3f8bae08c21e70cc81052f09917ed19a8ae92ae2f95db13ec108e359b9dd033c",
+      "operation": "procedure_pseudo_code",
+      "parameters": {
+        "procedure": "0x430460"
+      }
+    },
+    {
+      "label": "string-compare",
+      "evidence_id": "ev_b7f667f0f4ec8305407a7fa5b54f755c4cd93fbdc1a3e00396634f554ae0a9f6",
+      "operation": "procedure_pseudo_code",
+      "parameters": {
+        "procedure": "0x4278e0"
+      }
+    },
+    {
+      "label": "download-stages",
+      "evidence_id": "ev_b1caee2f593df004b648ac966541d4ad8ab17cbe8fd721f462c8aa7cdf570117",
+      "operation": "procedure_pseudo_code",
+      "parameters": {
+        "procedure": "0x42e470"
+      }
+    },
+    {
+      "label": "pit-upload",
+      "evidence_id": "ev_68402622818945feda5bfa5a0fb5643f5a0925abd43f105dea7e860cda13b890",
+      "operation": "procedure_pseudo_code",
+      "parameters": {
+        "procedure": "0x435240"
+      }
+    },
+    {
+      "label": "pit-upload-assembly",
+      "evidence_id": "ev_2ceb98514d06aa2ef5185b926056006b8bbf035140eb335ae39baff3eb0d78ef",
+      "operation": "procedure_assembly",
+      "parameters": {
+        "procedure": "0x435240"
+      }
+    },
+    {
+      "label": "pit-data-sender",
+      "evidence_id": "ev_4e25ada5aac8f6a9c41daa6d3572ddf504aa73eb88a0ce9f5fde42a8b73a9ac4",
+      "operation": "procedure_pseudo_code",
+      "parameters": {
+        "procedure": "0x4326c0"
+      }
+    },
+    {
+      "label": "pit-data-sender-assembly",
+      "evidence_id": "ev_e561f67a8f5a5bae8e33cabc55b6b3f59fd24de3aebc0c4f8955f3b9c24ab0e2",
+      "operation": "procedure_assembly",
+      "parameters": {
+        "procedure": "0x4326c0"
+      }
+    },
+    {
+      "label": "control-command",
+      "evidence_id": "ev_6ec742757f3f3e7c7dab3b5f53e8679155efe4ceee85082b2f0499e84c0b9556",
+      "operation": "procedure_pseudo_code",
+      "parameters": {
+        "procedure": "0x4324d0"
+      }
+    },
+    {
+      "label": "pit-download",
+      "evidence_id": "ev_0dee63a84f82d27bde0308a9cbd0437e046b30fd804f689b5050df9802986039",
+      "operation": "procedure_pseudo_code",
+      "parameters": {
+        "procedure": "0x435750"
+      }
+    },
+    {
+      "label": "device-pit-parser",
+      "evidence_id": "ev_603693fcf5d2b5c335811b1d61bae9d62ce9da0241411e51fa7faa1b495b0411",
+      "operation": "procedure_pseudo_code",
+      "parameters": {
+        "procedure": "0x432c10"
+      }
+    },
+    {
+      "label": "route-mapper",
+      "evidence_id": "ev_66966b04ea00f79424c81630c376c54ab4b097ff4c55ba9111aa7dc18e7c6d3a",
+      "operation": "procedure_pseudo_code",
+      "parameters": {
+        "procedure": "0x4329e0"
+      }
+    },
+    {
+      "label": "pit-tab-warning",
+      "evidence_id": "ev_66b2978e7cb2f447b17fa15b8df95389206501154f32b4e7c46a5488daac428f",
+      "operation": "procedure_pseudo_code",
+      "parameters": {
+        "procedure": "0x427310"
+      }
+    },
+    {
+      "label": "serial-write",
+      "evidence_id": "ev_40a9ddfa35b53b7d0e9cc73762c659ca95897021723f6da5f34661bb6c2f3ba0",
+      "operation": "procedure_pseudo_code",
+      "parameters": {
+        "procedure": "0x437ab0"
+      }
+    },
+    {
+      "label": "write-file",
+      "evidence_id": "ev_2cc1215bfdf40ade100108fdd9afd544eaf5c3c7ae198979dfc8e5755c174e97",
+      "operation": "procedure_pseudo_code",
+      "parameters": {
+        "procedure": "0x438300"
+      }
+    }
+  ],
+  "verification": {
+    "objects_command": "py build.py --objects-only --configuration Debug",
+    "objects_exit_code": 0,
+    "objects_compiled": 16,
+    "compiler_warnings": "Existing W8008 in Odin4FlashOperation.cpp:177; existing LZ4/xxhash constant-condition, unreachable-code, pointer-arithmetic and deprecated-macro warnings. No compile errors.",
+    "tests_command": "py tests/native_tests.py --configuration Debug --target native_streaming_tests --target native_session_tests",
+    "tests": {
+      "configuration": "Debug",
+      "compiler": "C:\\Program Files (x86)\\Embarcadero\\Studio\\15.0\\bin\\bcc32.exe",
+      "hardware_io": false,
+      "results": [
+        {
+          "target": "native_streaming_tests",
+          "compiler_exit": 0,
+          "static_engine_objects": 15,
+          "private_dll": false,
+          "exit_code": 0,
+          "output": "native streaming: 841 checks passed\n",
+          "seconds": 2.005
+        },
+        {
+          "target": "native_session_tests",
+          "compiler_exit": 0,
+          "static_engine_objects": 15,
+          "private_dll": false,
+          "exit_code": 0,
+          "output": "Native BCC session fake tests passed (11405308 checks)\n",
+          "seconds": 6.033
+        }
+      ]
+    },
+    "evidence_integrity_command": "rea inspect-evidence-bundle <JSON containing absolute bundle path and detail=summary>",
+    "evidence_integrity_result": "REA semantic ID and canonical manifest validation passed for 22 complete records.",
+    "documentation_validation": "All 17 relative report links and source line anchors resolve; git diff --check passed.",
+    "limitations": [
+      "Debug only; selected suites only.",
+      "No repartition implementation or physical device tests.",
+      "No production source changes; lint/typecheck/static-analysis checks beyond compiler and git diff --check were not run."
+    ]
+  }
+}

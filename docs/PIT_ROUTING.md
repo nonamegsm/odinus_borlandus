@@ -1,5 +1,7 @@
 # Firmware-independent PIT routing
 
+For the difference between metadata-only reference PIT handling and native Odin's partition-table upload, see the [REPARTITION audit](REPARTITION_AUDIT.md).
+
 Firmware eligibility does not depend on a known model, firmware release name, package-PIT fingerprint or VENDOR_BOOT digest. Image hashes still protect the actual selected archive between validation and transfer; they are computed from that input and are not compared with a firmware allowlist.
 
 ## Allocation units and capacity
