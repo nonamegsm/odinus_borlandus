@@ -1,4 +1,5 @@
 #include "Odin4DownloadChannel.h"
+#include "Odin4Tcp.h"
 #include <algorithm>
 #include <cstring>
 #include <limits>
@@ -33,6 +34,28 @@ EJODIN4_Status DownloadChannel::open(const char* path, uint32_t bytes, uint32_t 
     EJODIN4_Status status = interrupted(error);
     if (status != EJODIN4_OK) return status;
     const uint64_t until = deadline(platform_, timeout);
+    TcpEndpoint endpoint;
+    if (parse_tcp_endpoint(path, bytes, endpoint)) {
+        std::memset(&identity_, 0, sizeof(identity_));
+        identity_.flags = EJODIN4_DOWNLOAD_TCP;
+        std::strcpy(identity_.device_path, path);
+        std::strcpy(identity_.driver, "Winsock TCP/IP");
+        std::strcpy(identity_.description, endpoint.listen ? "Samsung Download TCP listener" : "Samsung Download TCP connection");
+        timeout_ = timeout;
+        status = platform_.open_tcp(path, tcp_, until, cancel_, error);
+        if (status == EJODIN4_OK && !tcp_.get()) {
+            error = "Missing TCP connection"; status = EJODIN4_INTERNAL_ERROR;
+        }
+        if (status != EJODIN4_OK) { std::string ignored; finish(ignored); return status; }
+        opened_ = true;
+        return EJODIN4_OK;
+    }
+    // Reject malformed endpoint requests without falling back to USB discovery.
+    if (bytes >= 4 && (path[0] == 't' || path[0] == 'T') &&
+        (path[1] == 'c' || path[1] == 'C') && (path[2] == 'p' || path[2] == 'P')) {
+        error = "TCP endpoint must be tcp://IPv4:port or tcp-listen://IPv4:port";
+        return EJODIN4_INVALID_ARGUMENT;
+    }
     std::vector<EJODIN4_UsbDevice> devices;
     status = platform_.enumerate(devices, cancel_, error);
     if (status != EJODIN4_OK) return status;
@@ -81,7 +104,8 @@ EJODIN4_Status DownloadChannel::exact(bool read, uint8_t* data, uint32_t bytes, 
         if (platform_.now() >= until) { error = "Download transfer timed out"; return transfer_failure(EJODIN4_TIMEOUT, read, offset, bytes, error); }
         uint32_t actual = 0;
         const uint64_t before = platform_.now();
-        status = serial_.get() ? serial_->transfer(read, data + offset, bytes - offset, actual, until, cancel_, error) :
+        status = tcp_.get() ? tcp_->transfer(read, data + offset, bytes - offset, actual, until, cancel_, error) :
+            serial_.get() ? serial_->transfer(read, data + offset, bytes - offset, actual, until, cancel_, error) :
             usb_->transfer(pipes_.interface_index, read ? pipes_.in : pipes_.out,
                 data + offset, bytes - offset, actual, until, cancel_, error);
         if (status != EJODIN4_OK) return transfer_failure(status, read, offset, bytes, error);
@@ -125,6 +149,7 @@ EJODIN4_Status DownloadChannel::optional_pit_ack(uint32_t& id,uint32_t& ack,bool
 EJODIN4_Status DownloadChannel::read_metadata_ack(uint8_t* ack,uint32_t timeout,
     bool& tail_present,uint32_t& tail_word,std::string& error) {
     tail_present=false;tail_word=0;
+    if(tcp_.get()) return read_exact(ack,8,timeout,error);
     if(serial_.get()) {
         EJODIN4_Status s=read_exact(ack,8,timeout,error);
         if(s!=EJODIN4_OK)return s;
@@ -159,7 +184,8 @@ EJODIN4_Status DownloadChannel::usb_boundary(bool read,std::string& error) {
 EJODIN4_Status DownloadChannel::finish(std::string& error) {
     EJODIN4_Status s = EJODIN4_OK;
     if(serial_.get()) s = serial_->finish(error);
-    serial_.reset(); usb_.reset(); opened_ = false;
+    if(tcp_.get()) s = tcp_->finish(error);
+    tcp_.reset(); serial_.reset(); usb_.reset(); opened_ = false;
     return s;
 }
 }

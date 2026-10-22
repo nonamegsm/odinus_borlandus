@@ -166,7 +166,7 @@ def layout_case(ui,width,height,artifacts):
     bounds=rect(ui.window)
     assert bounds[2]-bounds[0]==width and bounds[3]-bounds[1]==height
     client=W.RECT(); U.GetClientRect(ui.window,C.byref(client))
-    ids=list(range(400,406))+list(range(120,126))+list(range(201,208))+[103,141,142,143,160,161,162,163,164,165]+list(range(300,306))+list(range(310,316))
+    ids=list(range(400,406))+list(range(120,126))+list(range(201,208))+[103,105,106,141,142,143,160,161,162,163,164,165]+list(range(300,306))+list(range(310,316))
     controls={}
     for identifier in ids:
         controls[str(identifier)]=r=rect(ui.control(identifier),ui.window)
@@ -209,6 +209,33 @@ def main():
             assert not U.IsWindowEnabled(ui.control(206))
             assert U.SendMessageW(ui.control(161),0x408,0,0)==0
             results['layouts']=[layout_case(ui,1140,840,artifacts),layout_case(ui,1040,760,artifacts)]
+            assert U.SendMessageW(ui.control(105),0x147,0,0)==0, 'USB defaults selected'
+            for mode,endpoint in ((1,'0.0.0.0:13579'),(2,'192.168.1.20:13579')):
+                U.SendMessageW(ui.control(105),0x14E,mode,0)
+                U.SendMessageW(ui.window,0x111,105 | (1 << 16),ui.control(105))
+                assert text(ui.control(106))==endpoint
+                assert not U.IsWindowEnabled(ui.control(201)), 'USB refresh disabled in TCP modes'
+                assert U.IsWindowEnabled(ui.control(202)) and U.IsWindowEnabled(ui.control(105))
+                screenshot(ui.window,artifacts/('ui-tcp-'+str(mode)+'.bmp'))
+                # No files are selected: validation must stop before confirmation,
+                # worker creation, opening a socket or any device operation.
+                assert all(not text(ui.control(120+i)) for i in range(6))
+                U.SendMessageW(ui.control(143),0xF5,0,0)
+                assert U.SendMessageW(ui.control(141),0x147,0,0)==2
+                assert U.IsWindowEnabled(ui.control(126))
+                missing='Select all BL / AP / CP / CSC archives'
+                before=ui.log().count(missing)
+                U.SendMessageW(ui.window,0x111,205,0)
+                wait_for(lambda:ui.log().count(missing)>before)
+                assert 'TCP PIT upload is unsupported' not in ui.log()
+                assert not U.IsWindowEnabled(ui.control(206))
+                screenshot(ui.window,artifacts/('ui-tcp-repartition-'+str(mode)+'.bmp'))
+                U.SendMessageW(ui.control(143),0xF5,0,0)
+                U.SendMessageW(ui.control(141),0x14E,0,0)
+            U.SendMessageW(ui.control(105),0x14E,0,0)
+            U.SendMessageW(ui.window,0x111,105 | (1 << 16),ui.control(105))
+            assert U.IsWindowEnabled(ui.control(201)), 'USB refresh restored'
+            results['cases'].append('TCP listen/connect selection and repartition enforce complete clean firmware before confirmation or network I/O')
             assert all(ui.checked(i) for i in range(6))
             log_class=C.create_unicode_buffer(256);U.GetClassNameW(ui.control(164),log_class,len(log_class))
             assert log_class.value.lower()=='richedit20w', log_class.value

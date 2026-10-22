@@ -29,13 +29,14 @@ class Session {
     DeviceInfo device_info_;
     bool metadata_baseline_set_, metadata_baseline_tail_;
     uint64_t total_;
+    bool native_protocol() const { return channel_.transport()==EJODIN4_DOWNLOAD_SAMSUNG_SERIAL || channel_.transport()==EJODIN4_DOWNLOAD_TCP; }
     std::vector<uint8_t> pit_bytes_;
     EJODIN4_Status fail(EJODIN4_Status, const char*, std::string&);
     void phase(uint32_t);
     EJODIN4_Status announce_total(uint64_t, std::string&);
     EJODIN4_Status read_device_info(std::string&);
     EJODIN4_Status send_encoded_image(const PlanImage&, EncodedImageReader&, std::string&);
-    EJODIN4_Status response(uint32_t expected, bool capability, uint32_t timeout, std::string&, bool metadata = false);
+    EJODIN4_Status response(uint32_t expected, bool capability, uint32_t timeout, std::string&, bool metadata = false, bool allow_empty_id = false);
     EJODIN4_Status command(uint32_t command, uint32_t sub, const uint32_t* words,
         uint32_t word_count, bool capability, uint32_t timeout, std::string&);
 public:

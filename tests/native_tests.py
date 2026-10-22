@@ -3,7 +3,7 @@
 import argparse,json,os,subprocess,sys,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parent.parent
-TARGETS=('native_static_probe','native_archive_tests','native_streaming_tests','native_session_tests','native_transport_tests','native_firmware_identity_tests','native_device_info_tests','ui_logic_tests')
+TARGETS=('native_static_probe','native_archive_tests','native_streaming_tests','native_session_tests','native_transport_tests','native_tcp_tests','native_firmware_identity_tests','native_device_info_tests','ui_logic_tests')
 def quoted(path):
     return '"'+str(path)+'"'
 def main():
@@ -28,7 +28,7 @@ def main():
     for target in args.target or TARGETS:
         source=ROOT/'tests'/(target+'.cpp');output=destination/(target+'.exe')
         options=['-tWM','-tWC','-H-','-DWIN32','-D_WIN32_WINNT=0x0601','-DUNICODE','-D_UNICODE','-DEJ_ODIN4_CORE_STATIC','-DNOMINMAX','-I'+';'.join(quoted(p) for p in includes),'-L'+';'.join(quoted(p) for p in libraries),'-n'+quoted(destination),'-e'+quoted(output.name),quoted(source)]
-        options += [quoted(path) for path in objects]+['setupapi.lib','advapi32.lib','ole32.lib']
+        options += [quoted(path) for path in objects]+['setupapi.lib','advapi32.lib','ole32.lib','ws2_32.lib']
         response=destination/(target+'.rsp');response.write_text('\n'.join(options)+'\n',encoding='mbcs')
         started=time.time();built=subprocess.run([str(compiler),'@'+str(response)],cwd=destination,env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,errors='replace')
         (destination/(target+'-build.log')).write_text(built.stdout,encoding='utf-8')

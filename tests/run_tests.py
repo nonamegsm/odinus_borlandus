@@ -39,7 +39,7 @@ def main():
                  '--artifacts',TESTS/('ui-artifacts-'+args.configuration.lower())]
         if args.firmware_dir: command+=['--firmware-dir',args.firmware_dir]
         run(command,ROOT)
-    print('PASS: no device enumeration, connection probes, PIT reads or firmware writes were requested.')
+    print('PASS: local fake/loopback tests only; no physical-device enumeration, PIT reads or firmware writes were requested.')
 
 
 if __name__=='__main__':

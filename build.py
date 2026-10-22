@@ -166,7 +166,7 @@ def main():
     executable=out/"OdinBCC.exe"
     if pending.exists():pending.unlink()
     link=common+["-e"+quote(os.path.relpath(pending,intermediate))]+[quote(p) for p in objects]
-    link += ["comctl32.lib","comdlg32.lib","shell32.lib","setupapi.lib","advapi32.lib","ole32.lib"]
+    link += ["comctl32.lib","comdlg32.lib","shell32.lib","setupapi.lib","advapi32.lib","ole32.lib","ws2_32.lib"]
     response=intermediate/"bcc32-link.rsp"
     response.write_text("\n".join(link)+"\n",encoding="mbcs")
     result=subprocess.run([str(compiler),"@"+str(response)],cwd=intermediate,env=env)

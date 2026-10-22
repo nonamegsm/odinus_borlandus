@@ -11,6 +11,9 @@ static EJODIN4_FlashProgress image(){EJODIN4_FlashProgress p;std::memset(&p,0,si
 static EJODIN4_FlashProgress pitProgress(uint32_t phase){EJODIN4_FlashProgress p;std::memset(&p,0,sizeof(p));p.struct_size=sizeof(p);p.phase=phase;p.image_count=4;p.total_bytes=100;return p;}
 int main(){
     EJODIN4_FlashResult r=finalized();OdinUi::ProgressState s=context();
+    check(OdinUi::supported(EJODIN4_DOWNLOAD_TCP),"TCP is a supported completion transport");
+    EJODIN4_FlashResult tcp=r;tcp.transport=EJODIN4_DOWNLOAD_TCP;check(!warning(tcp,s),"TCP reboot failure cannot use serial-only success warning");
+    tcp.phase=EJODIN4_PHASE_COMPLETE;tcp.flags|=EJODIN4_FLASH_REBOOT_SENT;check(OdinUi::completion(tcp,EJODIN4_OK,EJODIN4_FLASH_WRITE,true,false,s).success,"acknowledged TCP flash completes");
     check(warning(r,s),"only finalized full transfer with serial reboot disconnect is successful warning");
     check(!(r.flags&EJODIN4_FLASH_REBOOT_SENT),"warning preserves reboot not confirmed");
     EJODIN4_FlashResult mixed=r;mixed.logical_sector_bytes=0;mixed.flags|=EJODIN4_FLASH_PER_PARTITION_PIT_UNITS;
@@ -88,7 +91,7 @@ int main(){
     preflight.acknowledged_bytes=preflight.total_bytes=s.acknowledged;check(s.observe(&preflight),"preflight with consistent ACK counter accepted");
     check(s.acknowledged==11882352976ULL&&s.terminalPhases==0&&s.rebootPending&&s.loggedImages[19],"preflight preserves ACK and safety state");
     s.terminalPhases=2;check(s.observe(&preflight)&&s.terminalPhases==2,"preflight does not clear cancellation proof");
-    check(OdinUi::supported(1)&&OdinUi::supported(2)&&!OdinUi::supported(0)&&!OdinUi::supported(3)&&!OdinUi::supported(256),"device choices support only exact known transport flags");
+    check(OdinUi::supported(1)&&OdinUi::supported(2)&&!OdinUi::supported(0)&&OdinUi::supported(3)&&!OdinUi::supported(4)&&!OdinUi::supported(256),"device choices support only exact known transport flags");
     check(OdinUi::tone(L"Writing [19/26] super_error.img (AP)")==OdinUi::Image,"filename error token is not severity");
     check(OdinUi::tone(L"Warning: reboot error unconfirmed")==OdinUi::Warning,"warning with error word stays amber");
     check(OdinUi::tone(L"FAILED: Image rejected")==OdinUi::Error,"real failure red");
@@ -156,6 +159,25 @@ int main(){
     check(OdinUi::completion(repartDone,EJODIN4_OK,EJODIN4_FLASH_REPARTITION,true,false,repartState).success,"full PIT proof plus completed firmware succeeds");
     repartState.pitStage=2;check(!OdinUi::completion(repartDone,EJODIN4_OK,EJODIN4_FLASH_REPARTITION,true,false,repartState).success,"result flags cannot replace missing observed readback");repartState.pitStage=3;
     for(unsigned bit=64;bit<=256;bit*=2){EJODIN4_FlashResult missingProof=repartDone;missingProof.flags&=~bit;check(!OdinUi::completion(missingProof,EJODIN4_OK,EJODIN4_FLASH_REPARTITION,true,false,repartState).success,"every explicit PIT result proof is required");}
+    EJODIN4_FlashResult tcpRepart=repartDone;tcpRepart.transport=EJODIN4_DOWNLOAD_TCP;
+    check(OdinUi::completion(tcpRepart,EJODIN4_OK,EJODIN4_FLASH_REPARTITION,true,false,repartState).success,"TCP repartition succeeds with complete PIT and firmware proof");
+    for(unsigned bit=64;bit<=256;bit*=2){EJODIN4_FlashResult missingProof=tcpRepart;missingProof.flags&=~bit;check(!OdinUi::completion(missingProof,EJODIN4_OK,EJODIN4_FLASH_REPARTITION,true,false,repartState).success,"TCP repartition requires every independent PIT proof");}
+    OdinUi::ProgressState tcpRepartState=repartState;tcpRepartState.pitStage=2;
+    check(!OdinUi::completion(tcpRepart,EJODIN4_OK,EJODIN4_FLASH_REPARTITION,true,false,tcpRepartState).success,"TCP result flags cannot replace missing readback callback");
+    EJODIN4_FlashResult tcpPartial=tcpRepart;--tcpPartial.acknowledged_bytes;tcpRepartState=repartState;tcpRepartState.acknowledged=tcpPartial.acknowledged_bytes;
+    check(!OdinUi::completion(tcpPartial,EJODIN4_OK,EJODIN4_FLASH_REPARTITION,true,false,tcpRepartState).success,"TCP repartition cannot succeed with partial firmware byte acknowledgement");
+    EJODIN4_FlashResult tcpCancelled=tcpPartial;tcpCancelled.phase=EJODIN4_PHASE_CANCELLED;tcpCancelled.last_proven_phase=EJODIN4_PHASE_DATA_ACK;--tcpCancelled.images_completed;
+    tcpCancelled.flags&=~(EJODIN4_FLASH_FINALIZED|EJODIN4_FLASH_REBOOT_SENT);tcpRepartState.rebootPending=false;
+    const OdinUi::Completion tcpCancelledResult=OdinUi::completion(tcpCancelled,EJODIN4_CANCELLED,EJODIN4_FLASH_REPARTITION,true,true,tcpRepartState);
+    check(tcpCancelledResult.valid&&!tcpCancelledResult.success&&!tcpCancelledResult.rebootWarning,"TCP repartition cancellation retains PIT proof and acknowledged prefix without success");
+    tcpRepartState.terminalPhases=2;
+    const OdinUi::Completion tcpCancelCallbackResult=OdinUi::completion(tcpCancelled,EJODIN4_CANCELLED,EJODIN4_FLASH_REPARTITION,true,false,tcpRepartState);
+    check(tcpCancelCallbackResult.valid&&!tcpCancelCallbackResult.success&&!tcpCancelCallbackResult.rebootWarning,"TCP repartition cancelled status and callback cannot produce success");
+    EJODIN4_FlashResult tcpReboot=tcpRepart;tcpReboot.phase=EJODIN4_PHASE_FAILED;tcpReboot.flags&=~EJODIN4_FLASH_REBOOT_SENT;
+    const OdinUi::Completion tcpRebootResult=OdinUi::completion(tcpReboot,EJODIN4_USB_IO_ERROR,EJODIN4_FLASH_REPARTITION,true,false,repartState);
+    check(tcpRebootResult.valid&&!tcpRebootResult.success&&!tcpRebootResult.rebootWarning,"TCP repartition reboot error cannot use serial-only warning success");
+    EJODIN4_FlashResult usbRepart=tcpRepart;usbRepart.transport=EJODIN4_DOWNLOAD_WINUSB;
+    check(!OdinUi::completion(usbRepart,EJODIN4_OK,EJODIN4_FLASH_REPARTITION,true,false,repartState).valid,"WinUSB repartition remains unsupported even with complete proof");
     OdinUi::ProgressState ordinaryState=repartState;ordinaryState.operation=EJODIN4_FLASH_WRITE;
     check(!OdinUi::completion(repartDone,EJODIN4_OK,EJODIN4_FLASH_WRITE,true,false,ordinaryState).valid,"unrequested PIT result flags invalid");
     EJODIN4_FlashResult repartWarning=repartDone;repartWarning.phase=EJODIN4_PHASE_FAILED;repartWarning.flags&=~EJODIN4_FLASH_REBOOT_SENT;

@@ -10,6 +10,7 @@ class DownloadChannel {
     Selection pipes_;
     std::unique_ptr<Connection> usb_;
     std::unique_ptr<SerialConnection> serial_;
+    std::unique_ptr<SerialConnection> tcp_;
     uint32_t timeout_;
     bool opened_;
     EJODIN4_Status exact(bool read, uint8_t*, uint32_t, uint32_t, std::string&);

@@ -6,7 +6,7 @@
 
 // Pure C++03 UI decisions; neither this helper nor its tests perform USB I/O.
 namespace OdinUi {
-inline bool supported(uint32_t flags) { return flags==EJODIN4_DOWNLOAD_WINUSB||flags==EJODIN4_DOWNLOAD_SAMSUNG_SERIAL; }
+inline bool supported(uint32_t flags) { return flags==EJODIN4_DOWNLOAD_WINUSB||flags==EJODIN4_DOWNLOAD_SAMSUNG_SERIAL||flags==EJODIN4_DOWNLOAD_TCP; }
 inline bool repartitionSelection(uint32_t policy,uint32_t roles) {
     const uint32_t required=(1u<<EJODIN4_PACKAGE_BL)|(1u<<EJODIN4_PACKAGE_AP)|(1u<<EJODIN4_PACKAGE_CP)|(1u<<EJODIN4_PACKAGE_CSC);
     return policy==EJODIN4_CLEAN_INSTALL&&(roles&required)==required&&!(roles&((1u<<EJODIN4_PACKAGE_HOME_CSC)|(1u<<EJODIN4_PACKAGE_PIT_REFERENCE)));
@@ -91,7 +91,7 @@ inline Completion completion(const EJODIN4_FlashResult& r,EJODIN4_Status status,
             !(r.flags&EJODIN4_FLASH_PIT_MATCHED)||!(r.flags&EJODIN4_FLASH_PLAN_READY)))||
         (write&&state.logicalSectorBytes&&r.logical_sector_bytes&&state.logicalSectorBytes!=r.logical_sector_bytes))return out;
     const uint32_t pitFlags=r.flags&(EJODIN4_FLASH_PIT_WRITE_STARTED|EJODIN4_FLASH_PIT_UPLOADED|EJODIN4_FLASH_PIT_VERIFIED);
-    if((pitFlags&&!repartition)||(repartition&&r.transport&&r.transport!=EJODIN4_DOWNLOAD_SAMSUNG_SERIAL)||
+    if((pitFlags&&!repartition)||(repartition&&r.transport&&r.transport!=EJODIN4_DOWNLOAD_SAMSUNG_SERIAL&&r.transport!=EJODIN4_DOWNLOAD_TCP)||
         (repartition&&any&&!(r.flags&EJODIN4_FLASH_PIT_WRITE_STARTED))||
         (repartition&&(r.images_completed||r.acknowledged_bytes||finalized||sent)&&!(r.flags&EJODIN4_FLASH_PIT_VERIFIED))||
         ((r.flags&EJODIN4_FLASH_PIT_WRITE_STARTED)&&!any)||

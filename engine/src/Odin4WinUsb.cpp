@@ -1,5 +1,6 @@
 #include "Odin4UsbTransport.h"
 #include "Odin4SamsungSerial.h"
+#include "Odin4Tcp.h"
 #include <windows.h>
 #include <setupapi.h>
 #include "Odin4WinUsbApi.h"
@@ -454,6 +455,11 @@ public:
             error = "Samsung serial transport was not selected"; return EJODIN4_DRIVER_UNSUPPORTED;
         }
         return open_native_serial(device, connection, deadline, cancel, error);
+    }
+    EJODIN4_Status open_tcp(const char* path,
+        std::unique_ptr<SerialConnection>& connection, uint64_t deadline,
+        const Cancellation& cancel, std::string& error) {
+        return open_native_tcp(path, connection, deadline, cancel, error);
     }
 };
 }

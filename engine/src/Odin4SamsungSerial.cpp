@@ -1,4 +1,5 @@
 #include "Odin4SamsungSerial.h"
+#include "Odin4Tcp.h"
 // Reuse the supported Windows API declarations missing from TDM's headers.
 #include "Odin4WinUsbApi.h"
 #include <algorithm>
@@ -53,8 +54,14 @@ EJODIN4_Status probe_download(Platform& platform, const char* path, uint32_t byt
     DownloadInterruption interrupted(platform,cancel,deadline,error);
     EJODIN4_Status status = interrupted();
     if (status != EJODIN4_OK) return status;
+    TcpEndpoint endpoint;
+    const bool tcp = parse_tcp_endpoint(path, bytes, endpoint);
+    if (!tcp && bytes >= 4 && (path[0]=='t'||path[0]=='T') &&
+        (path[1]=='c'||path[1]=='C') && (path[2]=='p'||path[2]=='P')) {
+        error="Invalid TCP endpoint"; return EJODIN4_INVALID_ARGUMENT;
+    }
     std::vector<EJODIN4_UsbDevice> devices;
-    status = platform.enumerate(devices, cancel, error);
+    status = tcp ? EJODIN4_OK : platform.enumerate(devices, cancel, error);
     if (status != EJODIN4_OK) return status;
     status = interrupted();
     if (status != EJODIN4_OK) return status;
@@ -65,9 +72,11 @@ EJODIN4_Status probe_download(Platform& platform, const char* path, uint32_t byt
         if (selected) { error = "Selected Download interface identity is ambiguous"; return EJODIN4_DRIVER_UNSUPPORTED; }
         selected = &candidate;
     }
+    EJODIN4_UsbDevice network; std::memset(&network,0,sizeof(network));
+    if(tcp) { network.flags=EJODIN4_DOWNLOAD_TCP;selected=&network; }
     if (!selected) { error = "Selected Download interface is no longer present"; return EJODIN4_NO_DEVICE; }
-    if (!known_samsung(selected->vendor_id, selected->product_id) ||
-        (selected->flags != EJODIN4_DOWNLOAD_WINUSB && selected->flags != EJODIN4_DOWNLOAD_SAMSUNG_SERIAL)) {
+    if (!tcp && (!known_samsung(selected->vendor_id, selected->product_id) ||
+        (selected->flags != EJODIN4_DOWNLOAD_WINUSB && selected->flags != EJODIN4_DOWNLOAD_SAMSUNG_SERIAL))) {
         error = "Selected Samsung interface has no supported Download transport";
         return EJODIN4_DRIVER_UNSUPPORTED;
     }
@@ -85,9 +94,10 @@ EJODIN4_Status probe_download(Platform& platform, const char* path, uint32_t byt
         }
     } else {
         std::unique_ptr<SerialConnection> connection;
-        status = platform.open_serial(*selected, connection, deadline, cancel, error);
+        status = tcp ? platform.open_tcp(path, connection, deadline, cancel, error) :
+            platform.open_serial(*selected, connection, deadline, cancel, error);
         if (status != EJODIN4_OK) return status;
-        if (!connection) { error = "Samsung serial platform returned no connection"; return EJODIN4_INTERNAL_ERROR; }
+        if (!connection) { error = "Download stream platform returned no connection"; return EJODIN4_INTERNAL_ERROR; }
         uint8_t hello[4] = {'O','D','I','N'}, reply[4] = {0};
         for (unsigned phase = 0; phase != 2; ++phase) {
             uint32_t offset = 0;
@@ -98,12 +108,12 @@ EJODIN4_Status probe_download(Platform& platform, const char* path, uint32_t byt
                 status = connection->transfer(phase != 0, (phase ? reply : hello) + offset,
                     4 - offset, actual, deadline, cancel, error);
                 if (status != EJODIN4_OK) return status;
-                if (actual > 4 - offset) { error = "Invalid Samsung serial transfer length"; return EJODIN4_USB_IO_ERROR; }
-                if (!actual) { error = "Samsung serial transfer made no progress"; return EJODIN4_USB_IO_ERROR; }
+                if (actual > 4 - offset) { error = "Invalid Download stream transfer length"; return EJODIN4_USB_IO_ERROR; }
+                if (!actual) { error = "Download stream transfer made no progress"; return EJODIN4_USB_IO_ERROR; }
                 offset += actual;
             }
         }
-        if (std::memcmp(reply, "LOKE", 4)) { error = "Samsung serial handshake did not return LOKE"; return EJODIN4_BAD_HANDSHAKE; }
+        if (std::memcmp(reply, "LOKE", 4)) { error = "Download stream handshake did not return LOKE"; return EJODIN4_BAD_HANDSHAKE; }
         status = connection->finish(error);
         if (status != EJODIN4_OK) return status;
     }

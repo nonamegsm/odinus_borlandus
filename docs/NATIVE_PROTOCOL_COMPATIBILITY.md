@@ -7,6 +7,7 @@ This implementation selects the supported wire flow from the negotiated protocol
 | Samsung stock modem driver | Native protocol 1 | Raw 128 KiB packets; validated firmware and live PIT capacity |
 | Samsung stock modem driver | Native protocols 2–3 | Negotiated 1 MiB packets; raw fallback, or native LZ4 block records when protocol >=3 advertises low-word capability 0x8000 |
 | Samsung stock modem driver | Native protocols 4–5 | DEVINFO exchange and authenticated package model/carrier policy, then raw or negotiated encoded transfer |
+| TCP listen / connect | Native protocols 1–5 | Same native image and identity checks; full clean repartition validates uploaded PIT read-back before images |
 | WinUSB | Reviewed protocols 1–3 | Existing pinned raw framing retained |
 
 Version 0, unknown versions and unreviewed WinUSB 4/5 flows remain rejected. MMC and UFS capacity validation still uses 512-byte and 4096-byte PIT units per selected partition. Other addressing schemes and unmeasured zero-count USERDATA remain unsupported. A validated package PIT is still required. These limits are separate from protocol negotiation.
@@ -47,4 +48,4 @@ The native verifier constructor 4116A0 explicitly installs the RSASS<PKCS1v15,SH
 
 Static analysis establishes host flow and packet construction, not live bootloader behavior. Tests use fake transports, real archive planning and independent generated-key cryptographic vectors. No genuine manufacturer-signed positive manifest fixture was available, so complete positive authenticated-archive-to-protocol-4/5 execution and physical compatibility remain untested. The production verifier explicitly rejects the generated test key. No phone was enumerated, opened, read or flashed for this change.
 
-ABI 1.12 preserves the existing exports and packed 64/537/68-byte request/progress/result records. It adds an explicit stock-driver [repartition operation](REPARTITION.md), optional raw target-PIT role, and independent PIT side-effect proof. Ordinary WRITE/READ_PIT and metadata-reference semantics remain unchanged. Native LZ4 record and DEVINFO handling remain required; the portable executable and matching manifest are published together.
+ABI 1.12 preserves the existing exports and packed 64/537/68-byte request/progress/result records. It adds an explicit stock-driver/TCP [repartition operation](REPARTITION.md), optional raw target-PIT role, and independent PIT side-effect proof. Ordinary WRITE/READ_PIT and metadata-reference semantics remain unchanged. Native LZ4 record and DEVINFO handling remain required; the portable executable and matching manifest are published together.

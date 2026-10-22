@@ -39,7 +39,7 @@ enum {
  * Callback must not throw or reenter the operation. It may be NULL. */
 typedef int32_t (EJODIN4_CALL *EJODIN4_CancelCallback)(void* context);
 enum { EJODIN4_USB_WINUSB_COMPATIBLE = 1 };
-enum { EJODIN4_DOWNLOAD_WINUSB = 1, EJODIN4_DOWNLOAD_SAMSUNG_SERIAL = 2 };
+enum { EJODIN4_DOWNLOAD_WINUSB = 1, EJODIN4_DOWNLOAD_SAMSUNG_SERIAL = 2, EJODIN4_DOWNLOAD_TCP = 3 };
 
 enum { EJODIN4_ARCHIVE_ENTRY_LZ4 = 1, EJODIN4_ARCHIVE_ENTRY_PIT = 2 };
 enum { EJODIN4_ARCHIVE_MD5_PRESENT = 1, EJODIN4_ARCHIVE_MD5_VERIFIED = 2 };
@@ -50,7 +50,7 @@ enum { EJODIN4_ANALYSIS_PIT_AVAILABLE = 1, EJODIN4_ANALYSIS_ALL_IMAGES_MAPPED = 
 /* Flash operations are explicit. PLAN_ONLY performs no device I/O; READ_PIT
  * reads a session PIT and closes without image transfer/reboot. WRITE requires
  * an explicit data policy and never uploads a PIT. REPARTITION requires CLEAN_INSTALL,
- * complete BL/AP/CP/CSC firmware and the Samsung stock driver. It uploads the
+ * complete BL/AP/CP/CSC firmware and Samsung stock-driver or TCP transport. It uploads the
  * selected firmware PIT (or explicit raw PIT_TARGET), verifies read-back, then writes images. */
 enum { EJODIN4_FLASH_PLAN_ONLY = 0, EJODIN4_FLASH_READ_PIT = 1, EJODIN4_FLASH_WRITE = 2, EJODIN4_FLASH_REPARTITION = 3 };
 enum { EJODIN4_PACKAGE_BL = 1, EJODIN4_PACKAGE_AP = 2, EJODIN4_PACKAGE_CP = 3, EJODIN4_PACKAGE_CSC = 4, EJODIN4_PACKAGE_HOME_CSC = 5, EJODIN4_PACKAGE_USERDATA = 6, EJODIN4_PACKAGE_PIT_REFERENCE = 7, EJODIN4_PACKAGE_PIT_TARGET = 8 };
@@ -425,7 +425,7 @@ typedef void (EJODIN4_CALL *EJODIN4_FlashProgressCallback)(
  * download list and omits USERDATA/MISC/OMR by member and PIT destination aliases.
  * Entire selected firmware is validated before any transfer; package PIT never
  * uploads. WRITE compares current device PIT and rejects unsupported routes.
- * Samsung stock-driver sessions support negotiated versions 1 through 5;
+ * Samsung stock-driver and TCP sessions support negotiated versions 1 through 5;
  * versions 4/5 require validated DEVINFO and manufacturer-signed authenticate.mf
  * with matching stored-member digests and common model/carrier before WRITE.
  * WinUSB image transfers retain reviewed versions 1 through 3 only. Unknown

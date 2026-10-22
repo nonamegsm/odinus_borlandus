@@ -70,6 +70,12 @@ public:
         error = "Samsung serial transport is unavailable";
         return EJODIN4_DRIVER_UNSUPPORTED;
     }
+    virtual EJODIN4_Status open_tcp(const char*,
+        std::unique_ptr<class SerialConnection>&, uint64_t,
+        const Cancellation&, std::string& error) {
+        error = "TCP Download transport is unavailable";
+        return EJODIN4_DRIVER_UNSUPPORTED;
+    }
 };
 
 // A pending operation owns no caller buffer. The concrete caller keeps the
