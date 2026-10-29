@@ -38,8 +38,9 @@ bool valid_request(const EJODIN4_FlashRequest* request, const EJODIN4_FlashResul
         error = "Unknown flash operation, flags, reserved fields, timeout or verified geometry"; return false;
     }
     const bool candidate_plan=(request->flags&EJODIN4_FLASH_PLAN_REPARTITION)!=0;
-    if(candidate_plan&&(request->operation!=EJODIN4_FLASH_PLAN_ONLY||request->data_policy!=EJODIN4_CLEAN_INSTALL)) {
-        error="Repartition planning is permitted only for a clean offline plan";return false;
+    if(candidate_plan&&(request->operation!=EJODIN4_FLASH_PLAN_ONLY||
+       (request->data_policy!=EJODIN4_CLEAN_INSTALL&&request->data_policy!=EJODIN4_UPDATE_SELECTED))) {
+        error="Repartition planning requires a clean or selected-update offline plan";return false;
     }
     if (!write_operation(request->operation) && request->flags && request->flags!=EJODIN4_FLASH_PLAN_REPARTITION) {
         error = "Reboot is permitted only for an explicit write operation"; return false;
@@ -51,7 +52,7 @@ bool valid_request(const EJODIN4_FlashRequest* request, const EJODIN4_FlashResul
     } else if (!valid_utf8_path(request->device_path, request->device_path_bytes)) {
         error = "Flash session needs one bounded exact UTF-8 device interface"; return false;
     }
-    if (request->file_count > 6 || (!request->files && request->file_count) ||
+    if (request->file_count > ((request->operation==EJODIN4_FLASH_REPARTITION||request->operation==EJODIN4_FLASH_PLAN_ONLY)?7u:6u) || (!request->files && request->file_count) ||
         (request->files && !request->file_count)) {
         error = "Firmware package array/count is invalid"; return false;
     }
@@ -67,8 +68,9 @@ bool valid_request(const EJODIN4_FlashRequest* request, const EJODIN4_FlashResul
     }
     uint32_t roles = 0;
     const bool repartition=request->operation==EJODIN4_FLASH_REPARTITION;
-    const bool target_allowed=(repartition||request->operation==EJODIN4_FLASH_PLAN_ONLY)&&request->data_policy==EJODIN4_CLEAN_INSTALL;
-    if(repartition&&request->data_policy!=EJODIN4_CLEAN_INSTALL){error="Repartition requires the clean-install data policy";return false;}
+    const bool target_allowed=(repartition||request->operation==EJODIN4_FLASH_PLAN_ONLY)&&
+        (request->data_policy==EJODIN4_CLEAN_INSTALL||request->data_policy==EJODIN4_UPDATE_SELECTED);
+    if(repartition&&request->data_policy!=EJODIN4_CLEAN_INSTALL&&request->data_policy!=EJODIN4_UPDATE_SELECTED){error="Repartition requires a clean or selected-update data policy";return false;}
     const uint32_t max_role = target_allowed?EJODIN4_PACKAGE_PIT_TARGET:request->data_policy == EJODIN4_UPDATE_SELECTED ? EJODIN4_PACKAGE_PIT_REFERENCE : EJODIN4_PACKAGE_USERDATA;
     for (uint32_t i = 0; i < request->file_count; ++i) {
         const EJODIN4_FirmwareFile& file = request->files[i];
@@ -81,12 +83,13 @@ bool valid_request(const EJODIN4_FlashRequest* request, const EJODIN4_FlashResul
         roles |= 1u << file.role;
     }
     if(repartition||candidate_plan||(roles&(1u<<EJODIN4_PACKAGE_PIT_TARGET))) {
-        if(!target_allowed||(roles&0x1eu)!=0x1eu || (roles&((1u<<EJODIN4_PACKAGE_HOME_CSC)|(1u<<EJODIN4_PACKAGE_PIT_REFERENCE)))) {
+        if(!target_allowed||(request->data_policy==EJODIN4_CLEAN_INSTALL&&
+           ((roles&0x1eu)!=0x1eu || (roles&((1u<<EJODIN4_PACKAGE_HOME_CSC)|(1u<<EJODIN4_PACKAGE_PIT_REFERENCE)))))) {
             error="Repartition candidate needs complete clean BL/AP/CP/CSC firmware; references and HOME_CSC cannot authorize it";return false;
         }
     }
     if (request->data_policy == EJODIN4_UPDATE_SELECTED &&
-        ((roles == (1u << EJODIN4_PACKAGE_PIT_REFERENCE)) ||
+        (!(roles&0x7eu) ||
          ((roles & (1u << EJODIN4_PACKAGE_CSC)) && (roles & (1u << EJODIN4_PACKAGE_HOME_CSC))))) {
         error = "Selected update needs an image archive and at most one CSC variant"; return false;
     }
@@ -218,8 +221,8 @@ EJODIN4_Status perform(const EJODIN4_FlashRequest& request, EJODIN4_FlashResult&
     if(repartition||explicit_target||(request.flags&EJODIN4_FLASH_PLAN_REPARTITION)) {
         // Candidate geometry and every transfer route must pass before PIT mutation.
         LayoutResolution candidate;
-        status=resolve_layout_profile(*firmware,firmware->package_pit_bytes,&archive_files[0],uint32_t(archive_files.size()),request.logical_sector_bytes,candidate,error);
-        if(status==EJODIN4_OK)status=firmware->validate_device_pit(firmware->package_pit,candidate.sector_bytes,error,request.userdata_capacity_bytes);
+        status=firmware->validate_device_pit(firmware->package_pit,request.logical_sector_bytes,error,request.userdata_capacity_bytes,true);
+        if(status==EJODIN4_OK)status=resolve_layout_profile(*firmware,firmware->package_pit_bytes,&archive_files[0],uint32_t(archive_files.size()),request.logical_sector_bytes,candidate,error,true);
         if(status!=EJODIN4_OK)return status;
         for(size_t image=0;image<firmware->images.size();++image)if(!stock_image_route_supported(firmware->images[image].route)) {
             error="Candidate PIT contains an unsupported Samsung stock-driver image route";return EJODIN4_DRIVER_UNSUPPORTED;
@@ -236,6 +239,8 @@ EJODIN4_Status perform(const EJODIN4_FlashRequest& request, EJODIN4_FlashResult&
         // Legacy versions do not require signed DEVINFO. Retain missing/failed
         // proof in context so newer native versions cannot authorize writes.
     }
+    // Audit native encoded records before opening the device. Unsupported
+    // frames use the host-decoded reader; wire failures never trigger retry.
     EncodedReaders encoded;
     if(writing){
         encoded.readers.resize(firmware->images.size(),static_cast<EncodedImageReader*>(0));
@@ -272,20 +277,31 @@ EJODIN4_Status perform(const EJODIN4_FlashRequest& request, EJODIN4_FlashResult&
     }
     if (status == EJODIN4_OK && firmware.get()) {
         LayoutResolution geometry;
-        status = resolve_layout_profile(*firmware, session.pit_bytes(), &archive_files[0], uint32_t(archive_files.size()),
-            request.logical_sector_bytes, geometry, error);
+        status = firmware->validate_device_pit(pit, request.logical_sector_bytes, error,
+            request.userdata_capacity_bytes, repartition);
         if (status == EJODIN4_OK) {
-            output.logical_sector_bytes = geometry.sector_bytes;
-            status = firmware->validate_device_pit(pit, geometry.sector_bytes, error,
-                request.userdata_capacity_bytes);
+            status = resolve_layout_profile(*firmware, session.pit_bytes(), &archive_files[0], uint32_t(archive_files.size()),
+                request.logical_sector_bytes, geometry, error, repartition);
         }
         if (status == EJODIN4_OK) {
-            events.geometry_source = geometry.source;
+            bool has_encoded=false;
+            if(writing&&session.compression_supported())
+                for(size_t i=0;i<encoded.readers.size();++i)
+                    if(encoded.readers[i]){has_encoded=true;break;}
+            std::string geometry_description=has_encoded?"Compression-capable: eligible images compressed; ":"Host-decoded raw; ";
+            geometry_description+=geometry.source;
+            for(size_t i=0;i<firmware->images.size();++i)
+                if(!firmware->images[i].route.block_count) {
+                    geometry_description += "; zero-count PIT capacity may be unmeasured";
+                    break;
+                }
+            events.geometry_source = geometry_description.c_str();
             output.flags |= EJODIN4_FLASH_PIT_MATCHED;
             if(writing && geometry.per_partition_units)
                 output.flags |= EJODIN4_FLASH_PER_PARTITION_PIT_UNITS;
             output.logical_sector_bytes = geometry.sector_bytes;
             events.phase(EJODIN4_PHASE_PLAN_VALIDATED);
+            events.geometry_source = 0;
         }
     }
     if (status == EJODIN4_OK && writing) {

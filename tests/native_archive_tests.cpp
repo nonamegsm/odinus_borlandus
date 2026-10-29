@@ -44,6 +44,15 @@ void archives(){Temp temp;Bytes body;append(body,"boot.img",Bytes(17,'b'));appen
  check(inspect(verified,0,0,count,summary)==EJODIN4_BUFFER_TOO_SMALL&&count==2&&summary.flags==3,"single full validation query provides MD5 summary");
  std::memset(entries,0xa5,sizeof(entries));EJODIN4_ArchiveEntry before[4];std::memcpy(before,entries,sizeof(entries));check(inspect(verified,entries,1,count,summary)==EJODIN4_BUFFER_TOO_SMALL&&count==2&&!std::memcmp(entries,before,sizeof(entries)),"short output receives no partial entries");
  Bytes changed=md5_archive(tar);changed[512]^=1;invalid_archive(temp,changed,EJODIN4_CHECKSUM_MISMATCH,true);invalid_archive(temp,tar,EJODIN4_INVALID_ARCHIVE,true);
+ char length_text[32];sprintf(length_text,"%lu",static_cast<unsigned long>(tar.size()));
+ const std::string metadata=std::string("Show the build information\nRBS BUILD_ID:35513859\noriginal_tar_file_size:")+length_text+"\n";
+ Bytes legacy=tar;legacy.insert(legacy.end(),metadata.begin(),metadata.end());legacy=md5_archive(legacy);
+ std::string legacy_path=temp.write(legacy,true);
+ check(inspect(legacy_path,entries,4,count,summary)==EJODIN4_OK&&summary.flags==3&&summary.payload_bytes==tar.size()&&
+       !std::strcmp(summary.actual_md5,summary.expected_md5),"legacy Samsung metadata included in verified MD5 but excluded from TAR");
+ changed=legacy;changed[tar.size()+metadata.find("35513859")]='4';invalid_archive(temp,changed,EJODIN4_CHECKSUM_MISMATCH,true);
+ changed=legacy;changed[tar.size()+metadata.find(length_text)]='9';invalid_archive(temp,changed,EJODIN4_INVALID_ARCHIVE,true);
+ changed=legacy;changed.pop_back();changed.pop_back();invalid_archive(temp,changed,EJODIN4_INVALID_ARCHIVE,true);
  changed=tar;changed[0]^=1;invalid_archive(temp,changed,EJODIN4_INVALID_ARCHIVE);changed=tar;changed[changed.size()-1]=1;invalid_archive(temp,changed,EJODIN4_INVALID_ARCHIVE);changed=tar;changed.resize(changed.size()-512);invalid_archive(temp,changed,EJODIN4_INVALID_ARCHIVE);
  const char* badnames[]={"../boot.img","/boot.img","a\\boot.img","a:boot.img","a//boot.img","a/./boot.img"};for(unsigned i=0;i<6;++i){Bytes bad;append(bad,badnames[i],Bytes(1,'x'));invalid_archive(temp,finish(bad),EJODIN4_INVALID_ARCHIVE);}
  const char types[]={'1','2','x','L','S'};for(unsigned i=0;i<5;++i){Bytes bad;append(bad,"boot.img",Bytes(1,'x'),types[i]);invalid_archive(temp,finish(bad),EJODIN4_UNSUPPORTED_ARCHIVE);}
@@ -53,6 +62,30 @@ void archives(){Temp temp;Bytes body;append(body,"boot.img",Bytes(17,'b'));appen
  std::unique_ptr<ejodin4::ImageReader> reader;check(held->open_member(0,reader,error)==EJODIN4_OK,"held member opens bounded reader");uint8_t bytes[32];uint32_t actual=0;check(reader->read(bytes,32,actual,cancel,error)==EJODIN4_OK&&actual==17&&bytes[0]=='b',"held member reads exact selected bytes");check(reader->read(bytes,32,actual,cancel,error)==EJODIN4_OK&&!actual,"held member EOF");
 }
 void analyze(){Temp temp;Bytes decoded(1024,'d');Bytes frame=compressed(decoded),table=pit(),tar;append(tar,"boot.img.lz4",frame);append(tar,"layout.pit",table);std::string path=temp.write(md5_archive(finish(tar)),true);EJODIN4_AnalyzedImage images[4];EJODIN4_AnalysisSummary summary;uint32_t count=0;char diagnostic[512];EJODIN4_Status status=EJODIN4_AnalyzeFirmwareArchive(path.c_str(),path.size()+1,0,0,4096,images,4,&count,&summary,0,0,diagnostic,sizeof(diagnostic));check(status==EJODIN4_OK&&count==2&&summary.decoded_bytes==1184,"LZ4 content and PIT decoded natively");check(images[0].decoded_bytes==1024&&images[0].pit_identifier==1&&images[0].flags==(EJODIN4_IMAGE_LZ4|EJODIN4_IMAGE_MAPPED)&&!std::strcmp(images[0].partition_name,"BOOT"),"decompressed image maps exact PIT filename");
+ Bytes placeholders=pit();placeholders.resize(28+3*132,0);put32(placeholders,4,3);
+ for(unsigned i=1;i<3;++i){const size_t at=28+i*132;put32(placeholders,at+4,8);put32(placeholders,at+8,i+1);std::memcpy(data(placeholders)+at+36,"BOTA",4);std::memcpy(data(placeholders)+at+68,"-",1);}
+ Bytes with_placeholders;append(with_placeholders,"boot.img",decoded);append(with_placeholders,"layout.pit",placeholders);
+ std::string placeholder_path=temp.write(finish(with_placeholders));
+ check(EJODIN4_AnalyzeFirmwareArchive(placeholder_path.c_str(),placeholder_path.size()+1,0,0,4096,images,4,&count,&summary,0,0,diagnostic,sizeof(diagnostic))==EJODIN4_OK&&images[0].pit_identifier==1,"repeated PIT placeholder filenames do not mask image routing");
+ Bytes unrelated=placeholders;for(unsigned i=1;i<3;++i){std::memset(data(unrelated)+28+i*132+68,0,32);std::memcpy(data(unrelated)+28+i*132+68,"other.img",9);}
+ Bytes unrelated_tar;append(unrelated_tar,"boot.img",decoded);append(unrelated_tar,"layout.pit",unrelated);std::string unrelated_path=temp.write(finish(unrelated_tar));
+ check(EJODIN4_AnalyzeFirmwareArchive(unrelated_path.c_str(),unrelated_path.size()+1,0,0,4096,images,4,&count,&summary,0,0,diagnostic,sizeof(diagnostic))==EJODIN4_OK&&images[0].pit_identifier==1,"unused duplicate PIT filenames do not block analysis");
+ Bytes dash;append(dash,"-",decoded);append(dash,"layout.pit",placeholders);std::string dash_path=temp.write(finish(dash));
+ check(EJODIN4_AnalyzeFirmwareArchive(dash_path.c_str(),dash_path.size()+1,0,0,4096,images,4,&count,&summary,0,0,diagnostic,sizeof(diagnostic))==EJODIN4_PIT_MAPPING_ERROR&&!count,"image named as PIT placeholder rejected");
+ Bytes ab=placeholders;
+ std::memset(data(ab)+28+36,0,32);std::memcpy(data(ab)+28+36,"BOOT_A",6);
+ std::memset(data(ab)+28+132+36,0,32);std::memcpy(data(ab)+28+132+36,"BOOT_B",6);
+ std::memset(data(ab)+28+132+68,0,32);std::memcpy(data(ab)+28+132+68,"BOOT.IMG",8);
+ Bytes ab_tar;append(ab_tar,"boot.img.lz4",frame);append(ab_tar,"layout.pit",ab);std::string ab_path=temp.write(finish(ab_tar));
+ check(EJODIN4_AnalyzeFirmwareArchive(ab_path.c_str(),ab_path.size()+1,0,0,4096,images,4,&count,&summary,0,0,diagnostic,sizeof(diagnostic))==EJODIN4_OK&&count==2&&images[0].pit_identifier==1&&!std::strcmp(images[0].partition_name,"BOOT_A"),"A/B image maps only first case-insensitive filename in PIT order");
+ for(size_t i=0;i<132;++i){const unsigned char previous=ab[28+i];ab[28+i]=ab[28+132+i];ab[28+132+i]=previous;}
+ Bytes reversed;append(reversed,"boot.img.lz4",frame);append(reversed,"layout.pit",ab);std::string reversed_path=temp.write(finish(reversed));
+ check(EJODIN4_AnalyzeFirmwareArchive(reversed_path.c_str(),reversed_path.size()+1,0,0,4096,images,4,&count,&summary,0,0,diagnostic,sizeof(diagnostic))==EJODIN4_OK&&count==2&&images[0].pit_identifier==2&&!std::strcmp(images[0].partition_name,"BOOT_B"),"reversed PIT uses first row without assuming active slot");
+ std::memset(data(ab)+28+264+68,0,32);std::memcpy(data(ab)+28+264+68,"boot.img",8);
+ Bytes three;append(three,"boot.img",decoded);append(three,"layout.pit",ab);std::string three_path=temp.write(finish(three));
+ check(EJODIN4_AnalyzeFirmwareArchive(three_path.c_str(),three_path.size()+1,0,0,4096,images,4,&count,&summary,0,0,diagnostic,sizeof(diagnostic))==EJODIN4_OK&&images[0].pit_identifier==2,"three matching PIT rows still select first");
+ Bytes duplicate_images;append(duplicate_images,"a/boot.img",decoded);append(duplicate_images,"b/boot.img",decoded);append(duplicate_images,"layout.pit",ab);std::string duplicate_path=temp.write(finish(duplicate_images));
+ check(EJODIN4_AnalyzeFirmwareArchive(duplicate_path.c_str(),duplicate_path.size()+1,0,0,4096,images,4,&count,&summary,0,0,diagnostic,sizeof(diagnostic))==EJODIN4_PIT_MAPPING_ERROR&&!count,"duplicate image destination remains rejected");
  EJODIN4_AnalyzedImage old[4];std::memset(images,0xa5,sizeof(images));std::memcpy(old,images,sizeof(images));check(EJODIN4_AnalyzeFirmwareArchive(path.c_str(),path.size()+1,0,0,1023,images,4,&count,&summary,0,0,diagnostic,sizeof(diagnostic))==EJODIN4_DECODE_LIMIT_EXCEEDED&&!count&&!std::memcmp(images,old,sizeof(images)),"LZ4 declared size enforces budget before output");
  frame[frame.size()-1]^=1;Bytes corrupt;append(corrupt,"boot.img.lz4",frame);path=temp.write(finish(corrupt));check(EJODIN4_AnalyzeFirmwareArchive(path.c_str(),path.size()+1,0,0,4096,images,4,&count,&summary,0,0,diagnostic,sizeof(diagnostic))==EJODIN4_INVALID_COMPRESSED_DATA&&!count,"LZ4 content checksum mismatch rejected");
  frame=compressed(decoded);frame.push_back(0);Bytes trailing;append(trailing,"boot.img.lz4",frame);path=temp.write(finish(trailing));check(EJODIN4_AnalyzeFirmwareArchive(path.c_str(),path.size()+1,0,0,4096,images,4,&count,&summary,0,0,diagnostic,sizeof(diagnostic))==EJODIN4_INVALID_COMPRESSED_DATA&&!count,"LZ4 trailing data rejected");

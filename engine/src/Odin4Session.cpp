@@ -7,6 +7,16 @@
 namespace ejodin4 {
 namespace {
 std::string decimal(uint32_t value){std::ostringstream out;out<<value;return out.str();}
+std::string hexadecimal(uint32_t value){std::ostringstream out;out<<std::hex<<value;return out.str();}
+EJODIN4_Status transfer_error(EJODIN4_Status status,std::string& error,const char* encoding,
+                              uint32_t sequence,const char* operation,uint32_t packet=UINT32_MAX) {
+    std::ostringstream out;
+    out<<encoding<<" sequence "<<sequence<<" "<<operation;
+    if(packet!=UINT32_MAX)out<<" "<<packet;
+    out<<": "<<error;
+    error=out.str();
+    return status;
+}
 const uint32_t sequence_bytes = 30u * 1024u * 1024u;
 uint32_t stock_sequence_bytes(const EJODIN4_PitEntry& route) {
     if(route.binary_type!=0)return 0;
@@ -56,8 +66,10 @@ EJODIN4_Status Session::command(uint32_t cmd,uint32_t sub,const uint32_t* words,
     put32(request,cmd); put32(request+4,sub);
     for(uint32_t i=0;i<count;++i) put32(request+8+4*i,words[i]);
     EJODIN4_Status s=channel_.write_exact(request,sizeof(request),timeout,error);
-    if(s!=EJODIN4_OK) return fail(s,"Write Odin request failed",error);
-    return response(cmd,capability,timeout,error,cmd==0x64 && sub==1);
+    if(s!=EJODIN4_OK) s=fail(s,"Write Odin request failed",error);
+    else s=response(cmd,capability,timeout,error,cmd==0x64 && sub==1);
+    if(s!=EJODIN4_OK)error="Odin command 0x"+hexadecimal(cmd)+"/0x"+hexadecimal(sub)+": "+error;
+    return s;
 }
 EJODIN4_Status Session::begin(std::vector<EJODIN4_PitEntry>& output,std::string& error,uint64_t planned_total,const FirmwareIdentity* identity,const std::vector<uint8_t>* repartition_pit) {
     if(begun_ || failed_ || !channel_.opened()) { error="Odin session cannot begin"; return EJODIN4_INVALID_ARGUMENT; }
@@ -249,6 +261,7 @@ EJODIN4_Status Session::send_encoded_image(const PlanImage& image,EncodedImageRe
     const uint32_t sequence_limit=stock_sequence_bytes(image.route);
     const uint64_t records_limit=uint64_t(sequence_limit)+8u*(sequence_limit/65536u+1u);
     uint64_t remaining=image.decoded_bytes;
+    uint32_t sequence_index=1;
     while(remaining) {
         EJODIN4_Status s=channel_.interrupted(error);
         if(s!=EJODIN4_OK)return fail(s,"Encoded sequence cancelled",error);
@@ -280,18 +293,19 @@ EJODIN4_Status Session::send_encoded_image(const PlanImage& image,EncodedImageRe
         state_.any_write=true;
         phase(EJODIN4_PHASE_IMAGE_BEGIN);
         s=command(0x66,5,0,0,false,channel_.timeout(),error);
-        if(s!=EJODIN4_OK)return s;
+        if(s!=EJODIN4_OK)return transfer_error(s,error,"encoded",sequence_index,"begin");
         const uint32_t sizes[]={stored,decoded};
         s=command(0x66,6,sizes,2,false,channel_.timeout(),error);
-        if(s!=EJODIN4_OK)return s;
+        if(s!=EJODIN4_OK)return transfer_error(s,error,"encoded",sequence_index,"start");
         for(uint32_t offset=0,index=0;offset<aligned;offset+=packet_bytes_,++index) {
             s=channel_.write_exact((&records[0])+offset,packet_bytes_,flash_timeout_,error);
-            if(s!=EJODIN4_OK)return fail(s,"Encoded image packet write failed",error);
+            if(s!=EJODIN4_OK){s=fail(s,"Encoded image packet write failed",error);return transfer_error(s,error,"encoded",sequence_index,"packet write",index);}
             s=response(0,false,flash_timeout_,error);
-            if(s!=EJODIN4_OK)return s;
+            if(s!=EJODIN4_OK)return transfer_error(s,error,"encoded",sequence_index,"packet acknowledgement",index);
             if(state_.last_ack!=index) {
-                error="Odin encoded packet acknowledgement index mismatch";
-                return fail(EJODIN4_INVALID_RESPONSE,"Wrong encoded packet index",error);
+                error="Odin encoded packet acknowledgement index mismatch: expected "+decimal(index)+" got "+decimal(state_.last_ack);
+                s=fail(EJODIN4_INVALID_RESPONSE,"Wrong encoded packet index",error);
+                return transfer_error(s,error,"encoded",sequence_index,"packet acknowledgement",index);
             }
             // Packet ACKs prove stored records, not decoded partition bytes.
             phase(EJODIN4_PHASE_DATA_ACK);
@@ -299,10 +313,11 @@ EJODIN4_Status Session::send_encoded_image(const PlanImage& image,EncodedImageRe
         const uint32_t words[]={0,decoded,image.route.binary_type,image.route.device_type,
             image.route.identifier,last?1u:0u,0,0};
         s=command(0x66,7,words,8,false,flash_timeout_,error);
-        if(s!=EJODIN4_OK)return s;
+        if(s!=EJODIN4_OK)return transfer_error(s,error,"encoded",sequence_index,"completion");
         state_.acknowledged_bytes+=decoded;state_.image_acknowledged_bytes+=decoded;
         phase(EJODIN4_PHASE_DATA_ACK);
         remaining-=decoded;
+        ++sequence_index;
     }
     ++state_.images_completed;
     phase(EJODIN4_PHASE_IMAGE_COMPLETE);
@@ -317,6 +332,7 @@ EJODIN4_Status Session::send_image(const PlanImage& image,ImageReader& reader,st
     state_.image_acknowledged_bytes=0;
     if(encoded)return send_encoded_image(image,*encoded,error);
     uint64_t remaining=image.decoded_bytes;
+    uint32_t sequence_index=1;
     bool first=true;
     // The native raw dispatcher uses the same framing for versions 1..5;
     // legacy negotiation changes packet size, not sequence begin/completion.
@@ -351,21 +367,21 @@ EJODIN4_Status Session::send_image(const PlanImage& image,ImageReader& reader,st
             state_.any_write=true;
             phase(EJODIN4_PHASE_IMAGE_BEGIN);
             EJODIN4_Status s=command(0x66,0,0,0,false,channel_.timeout(),error);
-            if(s!=EJODIN4_OK) return s;
+            if(s!=EJODIN4_OK) return transfer_error(s,error,"raw",sequence_index,"begin");
             first=false;
         }
         // The start command is 128-KiB aligned, while actual writes remain full
         // negotiated packets, including zero padding in the last packet.
         const uint32_t start_bytes=native_raw?((original+131071u)/131072u)*131072u:aligned;
         EJODIN4_Status s=command(0x66,2,&start_bytes,1,false,channel_.timeout(),error);
-        if(s!=EJODIN4_OK) return s;
+        if(s!=EJODIN4_OK) return transfer_error(s,error,"raw",sequence_index,"start");
         for(uint32_t offset=0,index=0;offset<aligned;offset+=packet_bytes_,++index) {
             state_.any_write=true; // The following call may write partially before failure.
             s=channel_.write_exact((&buffer[0])+offset,packet_bytes_,flash_timeout_,error);
-            if(s!=EJODIN4_OK) return fail(s,"Image packet write failed",error);
+            if(s!=EJODIN4_OK) { s=fail(s,"Image packet write failed",error);return transfer_error(s,error,"raw",sequence_index,"packet write",index); }
             s=response(0,false,flash_timeout_,error);
-            if(s!=EJODIN4_OK) return s;
-            if(state_.last_ack!=index) { error="Odin packet acknowledgement index mismatch";return fail(EJODIN4_INVALID_RESPONSE,"Wrong packet index",error); }
+            if(s!=EJODIN4_OK) return transfer_error(s,error,"raw",sequence_index,"packet acknowledgement",index);
+            if(state_.last_ack!=index) { error="Odin packet acknowledgement index mismatch: expected "+decimal(index)+" got "+decimal(state_.last_ack);s=fail(EJODIN4_INVALID_RESPONSE,"Wrong packet index",error);return transfer_error(s,error,"raw",sequence_index,"packet acknowledgement",index); }
             const uint64_t genuine=offset<original?std::min<uint32_t>(packet_bytes_,original-offset):0;
             state_.acknowledged_bytes+=genuine;state_.image_acknowledged_bytes+=genuine;
             phase(EJODIN4_PHASE_DATA_ACK);
@@ -376,12 +392,13 @@ EJODIN4_Status Session::send_image(const PlanImage& image,ImageReader& reader,st
         const uint32_t words[]={image.route.binary_type==1?1u:0u,real,image.route.binary_type,image.route.device_type,
             image.route.binary_type==1?0u:image.route.identifier,last?1u:0u,0,0};
         s=command(0x66,3,words,8,false,flash_timeout_,error);
-        if(s!=EJODIN4_OK) return s;
+        if(s!=EJODIN4_OK) return transfer_error(s,error,"raw",sequence_index,"completion");
         if(channel_.transport()==EJODIN4_DOWNLOAD_WINUSB) {
             s=channel_.usb_boundary(true,error);
             if(s!=EJODIN4_OK) return fail(s,"Sequence USB completion boundary failed",error);
         }
         remaining-=original;
+        ++sequence_index;
     }
     ++state_.images_completed;
     // Pinned odin4 resets its flash counter after each successfully completed

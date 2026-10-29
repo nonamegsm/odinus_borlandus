@@ -9,7 +9,10 @@ namespace OdinUi {
 inline bool supported(uint32_t flags) { return flags==EJODIN4_DOWNLOAD_WINUSB||flags==EJODIN4_DOWNLOAD_SAMSUNG_SERIAL||flags==EJODIN4_DOWNLOAD_TCP; }
 inline bool repartitionSelection(uint32_t policy,uint32_t roles) {
     const uint32_t required=(1u<<EJODIN4_PACKAGE_BL)|(1u<<EJODIN4_PACKAGE_AP)|(1u<<EJODIN4_PACKAGE_CP)|(1u<<EJODIN4_PACKAGE_CSC);
-    return policy==EJODIN4_CLEAN_INSTALL&&(roles&required)==required&&!(roles&((1u<<EJODIN4_PACKAGE_HOME_CSC)|(1u<<EJODIN4_PACKAGE_PIT_REFERENCE)));
+    if(policy==EJODIN4_CLEAN_INSTALL)
+        return (roles&required)==required&&!(roles&((1u<<EJODIN4_PACKAGE_HOME_CSC)|(1u<<EJODIN4_PACKAGE_PIT_REFERENCE)));
+    return policy==EJODIN4_UPDATE_SELECTED&&(roles&0x7eu)!=0&&
+        !((roles&(1u<<EJODIN4_PACKAGE_CSC))&&(roles&(1u<<EJODIN4_PACKAGE_HOME_CSC)));
 }
 inline bool rawPitName(const std::string& path) {
     if(path.size()<4)return false;const std::string s=path.substr(path.size()-4);

@@ -216,6 +216,31 @@ bool trailer_text(const unsigned char* tail, size_t bytes, size_t digest, size_t
     expected = lower_ascii(std::string(reinterpret_cast<const char*>(tail + digest),32));
     return true;
 }
+/* Older Samsung archives include build information in the checksum but not
+ * in the block-aligned TAR payload. */
+bool legacy_trailer(const unsigned char* tail, size_t bytes, size_t start,
+                    uint64_t absolute_start, size_t& digest_pos, std::string& expected) {
+    const std::string prefix = "Show the build information\nRBS BUILD_ID:";
+    const std::string size_prefix = "\noriginal_tar_file_size:";
+    if (start > bytes || bytes - start < prefix.size() ||
+        std::memcmp(tail + start,prefix.data(),prefix.size()) != 0) return false;
+    size_t i = start + prefix.size();
+    const size_t build_start = i;
+    while (i < bytes && tail[i] >= '0' && tail[i] <= '9') ++i;
+    if (i == build_start || bytes - i < size_prefix.size() ||
+        std::memcmp(tail + i,size_prefix.data(),size_prefix.size()) != 0) return false;
+    i += size_prefix.size();
+    const size_t size_start = i;
+    uint64_t declared = 0;
+    while (i < bytes && tail[i] >= '0' && tail[i] <= '9') {
+        const unsigned digit = tail[i++] - '0';
+        if (declared > (UINT64_MAX - digit) / 10) return false;
+        declared = declared * 10 + digit;
+    }
+    if (i == size_start || i >= bytes || tail[i++] != '\n' || declared != absolute_start) return false;
+    digest_pos = i;
+    return trailer_text(tail,bytes,i,i,expected);
+}
 struct ScanNotifier {
     const ejodin4::ArchiveScanCallback& progress;uint64_t total;const Cancellation& cancellation;
     ScanNotifier(const ejodin4::ArchiveScanCallback& p,uint64_t t,const Cancellation& c):progress(p),total(t),cancellation(c){}
@@ -243,6 +268,7 @@ void inspect(const char* path, uint32_t path_bytes, std::vector<EJODIN4_ArchiveE
     const tar_md5::TrailerPos located = tar_md5::locate_trailer(reinterpret_cast<const char*>(vector_data(tail)),tail.size(),tail_offset);
     summary.payload_bytes = summary.archive_bytes;
     std::string expected;
+    size_t legacy_start = 0, legacy_digest = 0;
     if (located.md5_pos >= 0 && located.trailer_start >= 0 &&
         (tail_offset + static_cast<uint64_t>(located.trailer_start)) % 512 == 0 &&
         trailer_text(vector_data(tail),tail.size(),static_cast<size_t>(located.md5_pos),static_cast<size_t>(located.trailer_start),expected)) {
@@ -262,6 +288,19 @@ void inspect(const char* path, uint32_t path_bytes, std::vector<EJODIN4_ArchiveE
             summary.flags = EJODIN4_ARCHIVE_MD5_PRESENT;
             std::memcpy(summary.expected_md5,expected.c_str(),33);
             break;
+        }
+    }
+    if (expected.empty()) {
+        for (size_t candidate = static_cast<size_t>((512 - tail_offset % 512) % 512);
+             candidate < tail.size(); candidate += 512) {
+            std::string digest; size_t digest_pos = 0;
+            if (legacy_trailer(vector_data(tail),tail.size(),candidate,tail_offset + candidate,digest_pos,digest)) {
+                expected = digest; legacy_start = candidate; legacy_digest = digest_pos;
+                summary.payload_bytes = tail_offset + candidate;
+                summary.flags = EJODIN4_ARCHIVE_MD5_PRESENT;
+                std::memcpy(summary.expected_md5,expected.c_str(),33);
+                break;
+            }
         }
     }
     if (ends_with(lower_ascii(std::string(path)),".tar.md5") && expected.empty())
@@ -339,9 +378,16 @@ void inspect(const char* path, uint32_t path_bytes, std::vector<EJODIN4_ArchiveE
         }
     }
     if (!ended || entries.empty() || !summary.image_bytes) fail(EJODIN4_INVALID_ARCHIVE,"TAR requires image data and a complete two-block terminator");
+    if (legacy_digest > legacy_start) {
+        const DWORD metadata_bytes = static_cast<DWORD>(legacy_digest - legacy_start);
+        file.read(buffer.data(),metadata_bytes,cancellation);
+        if (std::memcmp(buffer.data(),vector_data(tail) + legacy_start,metadata_bytes) != 0)
+            fail(EJODIN4_FILE_IO_ERROR,"Archive build information changed during inspection");
+        md5.add(buffer.data(),metadata_bytes);
+    }
     md5.finish(summary.actual_md5);
     if (!expected.empty()) {
-        if (expected != summary.actual_md5) fail(EJODIN4_CHECKSUM_MISMATCH,"TAR.MD5 checksum does not match the TAR payload");
+        if (expected != summary.actual_md5) fail(EJODIN4_CHECKSUM_MISMATCH,"TAR.MD5 checksum does not match the archive content");
         summary.flags |= EJODIN4_ARCHIVE_MD5_VERIFIED;
     }
     cancellation.check();
@@ -608,8 +654,10 @@ void map_images(std::vector<EJODIN4_AnalyzedImage>& images, const std::vector<ui
     for (uint32_t i = 0; i < count; ++i) {
         cancellation.check();
         const std::string name = bounded_name(entries[i].file_name,sizeof(entries[i].file_name));
-        if (!name.empty() && !filenames.insert(std::make_pair(lower_ascii(name),&entries[i])).second)
-            fail(EJODIN4_PIT_MAPPING_ERROR,"PIT contains ambiguous case-insensitive file names");
+        // Keep the first row in PIT order, matching Odin4's image lookup.
+        // This neither determines the active slot nor targets both entries.
+        if (!name.empty() && name != "-")
+            filenames.insert(std::make_pair(lower_ascii(name),&entries[i]));
     }
     std::set<uint32_t> destinations;
     uint32_t non_pit = 0, mapped = 0;
@@ -622,6 +670,7 @@ void map_images(std::vector<EJODIN4_AnalyzedImage>& images, const std::vector<ui
         const size_t slash = name.find_last_of('/');
         if (slash != std::string::npos) name.erase(0,slash + 1);
         if (ends_with(lower_ascii(name),".lz4")) name.resize(name.size() - 4);
+        if (name == "-") fail(EJODIN4_PIT_MAPPING_ERROR,"Image filename is a PIT placeholder");
         const std::map<std::string,const EJODIN4_PitEntry*>::const_iterator found = filenames.find(lower_ascii(name));
         if (found == filenames.end()) continue;
         const EJODIN4_PitEntry& entry = *found->second;

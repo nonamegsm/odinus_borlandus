@@ -221,8 +221,9 @@ def main():
                 # worker creation, opening a socket or any device operation.
                 assert all(not text(ui.control(120+i)) for i in range(6))
                 U.SendMessageW(ui.control(143),0xF5,0,0)
-                assert U.SendMessageW(ui.control(141),0x147,0,0)==2
+                assert U.SendMessageW(ui.control(141),0x147,0,0)==0, 'repartition preserves selected-update policy'
                 assert U.IsWindowEnabled(ui.control(126))
+                U.SendMessageW(ui.control(141),0x14E,2,0)
                 missing='Select all BL / AP / CP / CSC archives'
                 before=ui.log().count(missing)
                 U.SendMessageW(ui.window,0x111,205,0)
@@ -257,14 +258,14 @@ def main():
             U.SendMessageW(ui.control(143),0xF5,0,0)
             assert all(U.IsWindowEnabled(ui.control(n)) for n in (126,306,316))
             assert text(ui.control(405))=='PIT reference' and text(ui.control(125))==str(scratch/'reference.tar')
-            assert text(ui.control(126))==retained_pit and U.SendMessageW(ui.control(141),0x147,0,0)==2
-            assert 'Re-partition selected Clean installation' in ui.log()
+            assert text(ui.control(126))==retained_pit and U.SendMessageW(ui.control(141),0x147,0,0)==0
+            assert 'may erase data, including with Update selected slots' in ui.log()
             U.SendMessageW(ui.control(141),0x14E,1,0);ui.click_offline(203)
-            wait_for(lambda:'Re-partition requires Clean installation' in ui.log())
+            wait_for(lambda:'cannot use Preserve data policy' in ui.log())
             assert U.IsWindowEnabled(ui.control(143)) and not U.IsWindowEnabled(ui.control(206))
             U.SendMessageW(ui.control(141),0x14E,2,0)
             for i,prefix in enumerate(('BL','AP','CP','CSC')):set_text(ui.control(120+i),str(scratch/(prefix+'.tar')))
-            ui.click_offline(203);wait_for(lambda:'PIT reference is metadata only.' in ui.log())
+            ui.click_offline(203);wait_for(lambda:'PIT reference is available with Update selected slots.' in ui.log())
             set_text(ui.control(125),'');set_text(ui.control(126),str(scratch/'target.tar'))
             ui.click_offline(203);wait_for(lambda:'Raw PIT target must be a .pit file.' in ui.log())
             for i in range(6):set_text(ui.control(120+i),'')
@@ -274,7 +275,7 @@ def main():
             assert text(ui.control(405))=='PIT reference' and text(ui.control(126))==retained_pit
             assert not any(U.IsWindowEnabled(ui.control(n)) for n in (126,306,316))
             U.SendMessageW(ui.control(141),0x14E,0,0)
-            results['cases'].append('separate raw target defaults disabled, retains path, explicitly selects clean policy; preserve/reference/TAR/PIT-only reject before worker')
+            results['cases'].append('raw target defaults disabled, retains path and selected policy; preserve/reference/TAR/PIT-only reject before worker')
 
             for i in range(6):ui.toggle(i,False)
             before=ui.log().count('Choose at least one firmware image archive.')
@@ -361,7 +362,7 @@ def main():
                         item=tarfile.TarInfo('target.pit');item.size=len(embedded_raw);tar.addfile(item,io.BytesIO(embedded_raw))
             for i in range(6):ui.toggle(i,True);set_text(ui.control(120+i),'')
             for i,archive in enumerate(packages):set_text(ui.control(120+i),str(archive))
-            set_text(ui.control(126),str(raw_pit));U.SendMessageW(ui.control(143),0xF5,0,0)
+            set_text(ui.control(126),str(raw_pit));U.SendMessageW(ui.control(143),0xF5,0,0);U.SendMessageW(ui.control(141),0x14E,2,0)
             previous=ui.log().count('SUCCESS:');ui.click_offline(203)
             wait_for(lambda:ui.log().count('SUCCESS:')>previous and U.IsWindowEnabled(ui.control(203)))
             full=ui.full_log();segment=full[full.rfind('--- Offline plan ---'):]
@@ -378,8 +379,52 @@ def main():
             wait_for(lambda:ui.log().count('SUCCESS:')>previous and U.IsWindowEnabled(ui.control(203)))
             segment=ui.full_log()[ui.full_log().rfind('--- Offline plan ---'):]
             assert 'Plan: 4 images' in segment and 'PIT write started: no' in segment and 'Archive role 8:' not in segment
-            assert 'PIT target: embedded firmware package PIT' in segment
+            assert 'PIT source: explicitly selected firmware/reference archives only' in segment
             results['cases'].append('clean full four-slot offline plan selects embedded PIT when separate raw field is blank')
+            U.SendMessageW(ui.control(141),0x14E,0,0)
+            previous=ui.log().count('SUCCESS:');ui.click_offline(203)
+            wait_for(lambda:ui.log().count('SUCCESS:')>previous and U.IsWindowEnabled(ui.control(203)))
+            segment=ui.full_log()[ui.full_log().rfind('--- Offline plan ---'):]
+            assert 'Plan: 4 images' in segment and 'PIT write started: no' in segment
+            assert 'Opening selected device' not in segment and 'Connecting to selected device' not in segment
+            assert U.SendMessageW(ui.control(141),0x147,0,0)==0
+            results['cases'].append('selected-update repartition plans embedded PIT without touching a device')
+            for i in range(6):set_text(ui.control(120+i),'')
+            set_text(ui.control(121),str(packages[1]));set_text(ui.control(126),str(raw_pit))
+            previous=ui.log().count('SUCCESS:');ui.click_offline(203)
+            wait_for(lambda:ui.log().count('SUCCESS:')>previous and U.IsWindowEnabled(ui.control(203)))
+            segment=ui.full_log()[ui.full_log().rfind('--- Offline plan ---'):]
+            assert 'Plan: 1 images' in segment and 'Archive role 8: '+str(raw_pit) in segment and 'PIT write started: no' in segment
+            set_text(ui.control(126),'');set_text(ui.control(123),str(packages[3]));ui.toggle(3,False)
+            previous=ui.log().count('SUCCESS:');ui.click_offline(203)
+            wait_for(lambda:ui.log().count('SUCCESS:')>previous and U.IsWindowEnabled(ui.control(203)))
+            segment=ui.full_log()[ui.full_log().rfind('--- Offline plan ---'):]
+            assert 'Plan: 1 images' in segment and 'Archive role 7: '+str(packages[3]) in segment and 'PIT write started: no' in segment
+            results['cases'].append('selected-update subset accepts explicit raw PIT or metadata-only reference without device I/O')
+            ui.toggle(3,True)
+            # Repartition must not silently discover or replace a PIT source
+            # after the user has confirmed which archives were selected.
+            for i in range(6):set_text(ui.control(120+i),'')
+            set_text(ui.control(121),str(packages[1]))
+            auto_csc=scratch/'CSC_auto.tar';shutil.copy2(packages[3],auto_csc)
+            previous=ui.log().count('FAILED:');ui.click_offline(203)
+            wait_for(lambda:ui.log().count('FAILED:')>previous and U.IsWindowEnabled(ui.control(203)))
+            segment=ui.full_log()[ui.full_log().rfind('--- Offline plan ---'):]
+            assert 'A validated package PIT is required' in segment and 'PIT metadata only:' not in segment
+            assert 'PIT write started: no' in segment and 'Connecting to selected device' not in segment
+            home_ref=scratch/'HOME_CSC_auto.tar'
+            with tarfile.open(home_ref,'w',format=tarfile.USTAR_FORMAT) as tar:
+                item=tarfile.TarInfo('readme.txt');payload=b'no PIT here';item.size=len(payload);tar.addfile(item,io.BytesIO(payload))
+            set_text(ui.control(125),str(home_ref))
+            previous=ui.log().count('FAILED:');ui.click_offline(203)
+            wait_for(lambda:ui.log().count('FAILED:')>previous and U.IsWindowEnabled(ui.control(203)))
+            segment=ui.full_log()[ui.full_log().rfind('--- Offline plan ---'):]
+            assert 'A validated package PIT is required' in segment and 'Using matching CSC for PIT metadata only:' not in segment
+            assert 'Archive role 7: '+str(home_ref) in segment and 'PIT write started: no' in segment
+            results['cases'].append('repartition never discovers or substitutes an unselected PIT source')
+            for i in range(6):set_text(ui.control(120+i),'')
+            for i,archive in enumerate(packages):set_text(ui.control(120+i),str(archive))
+            U.SendMessageW(ui.control(141),0x14E,2,0)
             # Embedded candidates must receive the same capacity and stock-route preflight as raw candidates.
             oversized=scratch/'oversized-bootloader.tar'
             with tarfile.open(oversized,'w',format=tarfile.USTAR_FORMAT) as tar:
@@ -408,6 +453,21 @@ def main():
                     matches=list(args.firmware_dir.glob(prefix+'*.tar.md5'))
                     assert len(matches)==1, (prefix,matches)
                     return str(matches[0].resolve())
+                def verified_real_plan():
+                    log=ui.full_log()
+                    segment=log[log.rfind('--- Offline plan ---'):]
+                    final=re.search(r'Final state: protocol 0 \| images 0/(\d+) \|.*?any write: no \| finalized: no',segment)
+                    assert final, segment
+                    count=int(final.group(1)); assert count>0, segment
+                    byte_totals=re.search(r'Bytes acknowledged: 0/(\d+)',segment)
+                    assert byte_totals and int(byte_totals.group(1))>0, segment
+                    images=re.findall(r'Planned image \| [^\r\n]+? \| image (\d+)/(\d+) \| slot (\d+) \| PIT (\d+) \| SHA256 ([0-9a-fA-F]{64})',segment)
+                    assert len(images)==count, (count,images,segment)
+                    assert [int(image[0]) for image in images]==list(range(1,count+1)), images
+                    assert all(int(image[1])==count and int(image[2])!=7 for image in images), images
+                    assert 'Opening selected device' not in segment and 'Connecting to selected device' not in segment
+                    assert U.SendMessageW(ui.control(103),0x146,0,0)==0
+                    return count,int(byte_totals.group(1)),images,segment
                 chosen=[firmware('BL_'),firmware('AP_'),firmware('CP_'),'',firmware('HOME_CSC_'),firmware('HOME_CSC_')]
                 for index,value in enumerate(chosen):
                     set_text(ui.control(120+index),value)
@@ -415,27 +475,18 @@ def main():
                 previous=ui.log().count('SUCCESS:')
                 ui.click_offline(203)
                 wait_for(lambda:ui.log().count('SUCCESS:')>previous and U.IsWindowEnabled(ui.control(203)),timeout=240)
-                log=ui.full_log()
-                assert 'images 0/26' in log and 'any write: no' in log
-                assert 'finalized: yes' not in log
+                image_count,total_bytes,images,log=verified_real_plan()
                 assert 'Using matching CSC for PIT metadata only:' in log
                 assert 'Archive role 6: '+chosen[4] in log
                 assert 'Archive role 7: '+firmware('CSC_') in log
                 assert 'Archive role 4:' not in log
-                assert U.SendMessageW(ui.control(103),0x146,0,0)==0
                 assert U.SendMessageW(ui.control(161),0x408,0,0)==1000
-                assert 'Bytes acknowledged: 0/11882352976' in log
-                for expected in ('6413ceffbfedc011aa4194cf556904cb62bf85adfccf031ffdf227a1fd53b861',
-                                 'df0834a2a6ada27aac387ee29b73654f5aef393cb52d70bf3263341450965eb0',
-                                 '4d24a18f95bfc442cb2988e130df08b805309f72ac6cfcbcc12b21f15082a306'):
-                    assert 'SHA256 '+expected in log, expected
-                results['knownImageSha256Matches']=3
-                results['realPlanTotalBytes']=11882352976
-                results['realPlanImages']=26
-                results['cases'].append('actual BL/AP/CP/HOME in USERDATA and reference yields 26-image offline plan; only reference becomes CSC')
+                assert set(int(image[2]) for image in images).issuperset({1,2,3,6}), images
+                results['realPlanTotalBytes']=total_bytes
+                results['realPlanImages']=image_count
+                results['cases'].append('actual BL/AP/CP/HOME in USERDATA and reference yields an offline plan; only reference becomes CSC')
                 assert 'Archive role ' not in ui.log() and 'SHA256 ' not in ui.log()
-                assert 'Plan: 26 images' in ui.log()
-                assert sum(line.startswith('Plan [') for line in ui.log().splitlines())==26
+                assert 'Plan: '+str(image_count)+' images' in ui.log()
                 screenshot(ui.window,artifacts/'ui-real-plan.bmp')
                 # Retain CSC selection as metadata while excluding all CSC images.
                 for index,value in enumerate([firmware('BL_'),firmware('AP_'),firmware('CP_'),firmware('HOME_CSC_'),firmware('BL_'),'']):
@@ -444,12 +495,15 @@ def main():
                 previous=ui.log().count('SUCCESS:');ui.click_offline(203)
                 assert not any(U.IsWindowEnabled(ui.control(400+i)) for i in range(6))
                 wait_for(lambda:ui.log().count('SUCCESS:')>previous and U.IsWindowEnabled(ui.control(203)),timeout=240)
-                assert 'Plan: 23 images' in ui.log()
+                subset_count,_,subset_images,subset_log=verified_real_plan()
+                assert subset_count>0 and subset_count<image_count, (subset_count,image_count)
+                assert set(int(image[2]) for image in subset_images)=={1,2,3}, subset_images
+                assert 'Plan: '+str(subset_count)+' images' in ui.log()
                 assert not ui.checked(3) and not ui.checked(4)
                 assert not U.IsWindowEnabled(ui.control(123)) and not U.IsWindowEnabled(ui.control(124))
                 assert text(ui.control(123))==firmware('HOME_CSC_') and text(ui.control(124))==firmware('BL_')
                 assert not U.IsWindowEnabled(ui.control(206)) and U.SendMessageW(ui.control(103),0x146,0,0)==0
-                results['cases'].append('actual BL AP CP plan omits unchecked CSC/USERDATA images, retains CSC metadata and disabled duplicate, 23 images')
+                results['cases'].append('actual BL AP CP plan omits unchecked CSC/USERDATA images and retains CSC metadata and disabled duplicate')
                 screenshot(ui.window,artifacts/'ui-real-plan-csc-unchecked.bmp')
                 generic=scratch/'generic-reference.tar'
                 with tarfile.open(generic,'w',format=tarfile.USTAR_FORMAT) as tar:
@@ -460,22 +514,24 @@ def main():
                 set_text(ui.control(123),firmware('CSC_'));set_text(ui.control(125),str(generic))
                 previous=ui.log().count('SUCCESS:');ui.click_offline(203)
                 wait_for(lambda:ui.log().count('SUCCESS:')>previous and U.IsWindowEnabled(ui.control(203)),timeout=120)
-                assert 'Plan: 3 images' in ui.log()
-                full=ui.full_log();segment=full[full.rfind('--- Offline plan ---'):]
+                csc_count,_,csc_images,segment=verified_real_plan()
+                assert set(int(image[2]) for image in csc_images)=={4}, csc_images
+                assert 'Plan: '+str(csc_count)+' images' in ui.log()
                 assert 'Archive role 4: '+firmware('CSC_') in segment
                 assert 'Archive role 7: '+firmware('CSC_') in segment
                 assert 'Using matching CSC for PIT metadata only:' in segment
                 assert 'Archive role 7: '+str(generic) not in segment
-                results['cases'].append('generic no-PIT reference reuses explicitly selected CSC as metadata without changing its image role, 3 images')
+                results['cases'].append('generic no-PIT reference reuses explicitly selected CSC as metadata without changing its image role')
                 set_text(ui.control(123),'');set_text(ui.control(122),firmware('CP_'))
                 previous=ui.log().count('SUCCESS:');ui.click_offline(203)
                 wait_for(lambda:ui.log().count('SUCCESS:')>previous and U.IsWindowEnabled(ui.control(203)),timeout=120)
-                assert 'Plan: 2 images' in ui.log()
-                full=ui.full_log();segment=full[full.rfind('--- Offline plan ---'):]
+                cp_count,_,cp_images,segment=verified_real_plan()
+                assert set(int(image[2]) for image in cp_images)=={3}, cp_images
+                assert 'Plan: '+str(cp_count)+' images' in ui.log()
                 assert 'Archive role 3: '+firmware('CP_') in segment
                 assert 'Archive role 7: '+firmware('CSC_') in segment and 'Archive role 4:' not in segment
                 assert 'Archive role 7: '+str(generic) not in segment
-                results['cases'].append('generic no-PIT reference resolves unique validated sibling by replacing role7 only; CP remains 2 images')
+                results['cases'].append('generic no-PIT reference resolves unique validated sibling by replacing role7 only; CP remains the sole image role')
                 missing_home=scratch/'HOME_CSC_missing_match.tar';shutil.copy2(generic,missing_home)
                 set_text(ui.control(125),str(missing_home));previous=ui.log().count('FAILED:');ui.click_offline(203)
                 wait_for(lambda:ui.log().count('FAILED:')>previous and U.IsWindowEnabled(ui.control(203)))

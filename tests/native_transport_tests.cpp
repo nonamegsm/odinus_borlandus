@@ -247,12 +247,63 @@ void test_pending() {
         "Cancellation before wait still drains submitted IO"); }
 }
 struct Descriptor { uint8_t bAlternateSetting; };
+class FakeStartup : public ejodin4::SerialStartup {
+public:
+    uint64_t clock; unsigned fail_step,waits; bool* cancellation_flag;
+    std::vector<std::string> events;
+    FakeStartup():clock(100),fail_step(0),waits(0),cancellation_flag(0) {}
+    bool set_mask(uint32_t mask,std::string& error) {
+        events.push_back("mask");check(mask==1,"RXCHAR mask matches Odin startup");
+        if(fail_step==1){error="mask failure";return false;}return true;
+    }
+    bool setup_buffers(uint32_t input,uint32_t output,std::string& error) {
+        events.push_back("queues");check(input==4096&&output==4096,"Odin queue recommendations");
+        if(fail_step==2){error="queue failure";return false;}return true;
+    }
+    bool purge(uint32_t flags,std::string& error) {
+        events.push_back("purge");check(flags==15,"Odin pre-handshake purge flags");
+        if(fail_step==3){error="purge failure";return false;}return true;
+    }
+    EJODIN4_Status set_timeouts(uint64_t deadline,std::string& error) {
+        events.push_back("timeouts");check(deadline>clock,"bounded startup deadline forwarded");
+        if(fail_step==4){error="timeout failure";return EJODIN4_USB_IO_ERROR;}return EJODIN4_OK;
+    }
+    uint64_t now() const {return clock;}
+    void wait(uint32_t ms) {
+        check(ms>0&&ms<=20,"startup sleep remains bounded and cancellable");
+        clock+=ms;++waits;if(cancellation_flag)*cancellation_flag=true;
+    }
+};
+void test_serial_startup() {
+    std::string error;
+    FakeStartup ok;
+    check(ejodin4::initialize_serial(ok,1000,never,error)==EJODIN4_OK,"Odin startup succeeds");
+    check(ok.events==strings("mask","queues","purge","timeouts")&&ok.clock==600&&ok.waits==25,
+        "one pre-I/O setup sequence followed by 500 ms cancellable wait");
+    for(unsigned failure=1;failure<=4;++failure){
+        FakeStartup bad;bad.fail_step=failure;error.clear();
+        check(ejodin4::initialize_serial(bad,1000,never,error)==EJODIN4_USB_IO_ERROR&&!error.empty(),"setup failure stops before handshake");
+        check(bad.events.size()==failure&&bad.waits==0,"no later setup or waiting after failure");
+    }
+    FakeStartup pre_cancel;
+    check(ejodin4::initialize_serial(pre_cancel,1000,cancel_value(cancel_yes,0),error)==EJODIN4_CANCELLED&&pre_cancel.events.empty(),
+        "cancel before initialization does not touch handle");
+    FakeStartup during;bool cancelled=false;during.cancellation_flag=&cancelled;
+    check(ejodin4::initialize_serial(during,1000,cancel_value(cancel_flag,&cancelled),error)==EJODIN4_CANCELLED&&during.waits==1,
+        "startup wait responds to cancellation");
+    FakeStartup expired;
+    check(ejodin4::initialize_serial(expired,100,never,error)==EJODIN4_TIMEOUT&&expired.events.empty(),
+        "expired deadline does not touch handle");
+    FakeStartup budget;
+    check(ejodin4::initialize_serial(budget,600,never,error)==EJODIN4_TIMEOUT&&budget.clock==600,
+        "500 ms startup cannot report success at the deadline");
+}
 struct AlternateQuery { std::vector<uint8_t>* queried; unsigned* calls; bool endless; AlternateQuery(std::vector<uint8_t>* q,unsigned* c=0,bool e=false):queried(q),calls(c),endless(e){} bool operator()(uint8_t index,Descriptor& result)const {if(calls)++*calls;if(queried)queried->push_back(index);if(endless){result.bAlternateSetting=1;return true;}const uint8_t settings[]={0,3,7};if(index>=3)return false;result.bAlternateSetting=settings[index];return true;} };
 void test_alternate_ordinals(){Descriptor d={0};uint8_t ordinal=99;std::vector<uint8_t> queried;AlternateQuery query(&queried);check(ejodin4::find_current_alternate(7,d,ordinal,query)&&ordinal==2&&d.bAlternateSetting==7,"Alternate descriptor ordinal");check(queried.size()==3&&queried[0]==0&&queried[1]==1&&queried[2]==2,"Queries use descriptor ordinal");queried.clear();ordinal=99;check(!ejodin4::find_current_alternate(6,d,ordinal,query)&&ordinal==99,"Missing alternate does not invent selection");check(queried.size()==4&&queried[3]==3,"Enumeration stops at native end");unsigned calls=0;check(!ejodin4::find_current_alternate(2,d,ordinal,AlternateQuery(0,&calls,true))&&calls==256,"Alternate query is bounded");}
 
 }
 int main() {
-    try { test_probe(); test_inputs_and_enumeration(); test_pending(); test_alternate_ordinals(); test_serial_deadline_policy();
+    try { test_probe(); test_inputs_and_enumeration(); test_pending(); test_alternate_ordinals(); test_serial_deadline_policy(); test_serial_startup();
         std::cout << "Native BCC fake USB transport tests passed: " << checks << " checks\n"; return 0;
     } catch (const std::exception& e) { std::cerr << "Odin4 fake USB failure after " << checks << ": " << e.what() << '\n'; return 1; }
 }

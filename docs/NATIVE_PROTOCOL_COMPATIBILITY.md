@@ -4,13 +4,13 @@ This implementation selects the supported wire flow from the negotiated protocol
 
 | Transport | Supported flow | Write prerequisites |
 | --- | --- | --- |
-| Samsung stock modem driver | Native protocol 1 | Raw 128 KiB packets; validated firmware and live PIT capacity |
+| Samsung stock modem driver | Native protocol 1 | Raw 128 KiB packets; validated firmware and live PIT mapping |
 | Samsung stock modem driver | Native protocols 2–3 | Negotiated 1 MiB packets; raw fallback, or native LZ4 block records when protocol >=3 advertises low-word capability 0x8000 |
 | Samsung stock modem driver | Native protocols 4–5 | DEVINFO exchange and authenticated package model/carrier policy, then raw or negotiated encoded transfer |
-| TCP listen / connect | Native protocols 1–5 | Same native image and identity checks; full clean repartition validates uploaded PIT read-back before images |
+| TCP listen / connect | Native protocols 1–5 | Same native image and identity checks; explicit selected-update or clean repartition validates uploaded PIT read-back before images |
 | WinUSB | Reviewed protocols 1–3 | Existing pinned raw framing retained |
 
-Version 0, unknown versions and unreviewed WinUSB 4/5 flows remain rejected. MMC and UFS capacity validation still uses 512-byte and 4096-byte PIT units per selected partition. Other addressing schemes and unmeasured zero-count USERDATA remain unsupported. A validated package PIT is still required. These limits are separate from protocol negotiation.
+Version 0, unknown versions and unreviewed WinUSB 4/5 flows remain rejected. MMC and UFS capacity validation uses 512-byte and 4096-byte PIT units per selected partition when a positive live block count is available. Other addressing schemes remain unsupported. A normal write may proceed with an unmeasured zero-count partition; its capacity is not inferred. A validated package PIT is still required. These limits are separate from protocol negotiation.
 
 ## Encoded transfer
 

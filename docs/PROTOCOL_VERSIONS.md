@@ -1,6 +1,6 @@
 # Samsung Download protocol versions
 
-This describes the native engine built into OdinBCC.exe as of 2026-10-18. The version is negotiated with the device and reported in EJODIN4_FlashResult.protocol_version. It is separate from the Odin application release, the Odin4 source/module name and the public C ABI returned by EJODIN4_GetAbiVersion().
+This describes the native engine built into OdinBCC.exe. The version is negotiated with the device and reported in EJODIN4_FlashResult.protocol_version. It is separate from the Odin application release, the Odin4 source/module name and the public C ABI returned by EJODIN4_GetAbiVersion().
 
 ## Support matrix
 
@@ -8,7 +8,7 @@ This describes the native engine built into OdinBCC.exe as of 2026-10-18. The ve
 | --- | --- | --- | --- |
 | 1 | Supported | 128 KiB (131,072 bytes) | 30 seconds |
 | 2 | Supported | 1 MiB (1,048,576 bytes) | 120 seconds |
-| 3 | Stock driver: raw or negotiated encoded transfer; WinUSB: raw | 1 MiB (1,048,576 bytes) | 120 seconds |
+| 3 | Supported; compressed LZ4 block records when eligible and negotiated, otherwise host-decoded raw | 1 MiB (1,048,576 bytes) | 120 seconds |
 | 4 | Stock driver only; DEVINFO model and authenticated firmware identity required for writes | 1 MiB (1,048,576 bytes) | 120 seconds |
 | 5 | Stock driver only; DEVINFO model/carrier and authenticated firmware identity required for writes | 1 MiB (1,048,576 bytes) | 120 seconds |
 | 0 or any other decoded value | Rejected as unsupported | No image transfer | Not applicable |
@@ -55,11 +55,13 @@ The flash operation validates every planned route before the first image write. 
 
 WinUSB retains a 30 MiB sequence limit, file-begin once per image, USB packet-boundary handling, and a counter query/reset (0x64/1) after PIT and after each completed image. Its large-partition completion length rounds up to 512 bytes. The query/reset may return an 8- or 12-byte metadata response; the optional trailing word is opaque and response framing must stay consistent within the session. These transport differences are implemented independently of the accepted version number. See [the session](../engine/src/Odin4Session.cpp) and [the download channel](../engine/src/Odin4DownloadChannel.cpp).
 
-## Negotiated encoded transfer
+## Encoded transfer implementation
 
-The stock-driver path enables encoded transfer only for protocol >=3 with capability bit 0x8000. Eligible LZ4 records use 0x66/5 to begin, 0x66/6 with stored and decoded lengths, padded indexed packets, and 0x66/7 to complete. Completion retains the exact decoded length and PIT route. Progress credits decoded bytes after sequence completion, rather than treating acknowledged compressed bytes as partition bytes.
+The stock-driver encoded implementation is eligible only for protocol >=3 with capability bit 0x8000. Eligible LZ4 records use 0x66/5 to begin, 0x66/6 with stored and decoded lengths, padded indexed packets, and 0x66/7 to complete. Completion retains the exact decoded length and PIT route. Progress credits decoded bytes after sequence completion, rather than treating acknowledged compressed bytes as partition bytes. Eligibility is audited before connection; unsupported profiles and devices without the negotiated capability use host-decoded raw transfer.
 
-Unsupported LZ4 frame profiles select host decoding before image writes. A transfer failure never triggers a raw retry or replay after writes begin. WinUSB retains its raw flow.
+No transfer failure triggers an automatic retry or replay after writes begin. WinUSB retains its raw flow. The prior SUPER failure did not record whether compressed transfer was used, and neither its cause nor physical recovery is established by these offline checks.
+
+On a fresh exclusive Samsung serial handle, startup requests the receive event mask, 4096-byte input/output queue recommendations and a queue purge before I/O, then waits 500 ms with cancellation and deadline checks. The DCB remains unchanged and timeouts remain bounded. These calls follow static Odin startup evidence, but do not establish equivalent driver behavior. The supplied Odin capture records compressed SUPER transfers and a PIT upload, then ends mid-transfer; the user separately reported a later PASS. It does not prove the cause of success or a physical result for this restored build.
 
 ## Verification and limits
 

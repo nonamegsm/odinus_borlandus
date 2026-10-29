@@ -22,14 +22,17 @@ bool same_pit_layout(const std::vector<uint8_t>& package,const std::vector<uint8
 }
 EJODIN4_Status resolve_layout_profile(const FirmwareSet& firmware,const std::vector<uint8_t>& live_pit,
     const EJODIN4_FirmwareFile* files,uint32_t count,uint32_t caller_sector_bytes,
-    LayoutResolution& output,std::string& error){
+    LayoutResolution& output,std::string& error,bool strict_layout){
     output=LayoutResolution();
     if(caller_sector_bytes){
         if(caller_sector_bytes!=512&&caller_sector_bytes!=1024&&caller_sector_bytes!=2048&&caller_sector_bytes!=4096){error="Caller PIT allocation unit is unsupported";return EJODIN4_INVALID_ARGUMENT;}
         output.sector_bytes=caller_sector_bytes;output.source="Caller-verified PIT allocation unit";return EJODIN4_OK;
     }
-    if(!valid_packages(firmware,files,count)||!same_pit_layout(firmware.package_pit_bytes,live_pit)){
-        error="Automatic PIT units require valid selected packages and matching logical package/live PIT";return EJODIN4_PIT_MAPPING_ERROR;
+    if(!valid_packages(firmware,files,count)){
+        error="Automatic PIT units require a valid selected image plan";return EJODIN4_PIT_MAPPING_ERROR;
+    }
+    if(strict_layout&&!same_pit_layout(firmware.package_pit_bytes,live_pit)){
+        error="Repartition requires a matching logical target PIT";return EJODIN4_PIT_MAPPING_ERROR;
     }
     uint32_t common=0;bool mixed=false;
     for(size_t i=0;i<firmware.images.size();++i){

@@ -24,6 +24,9 @@ uint32_t u32(const uint8_t* p) { return uint32_t(p[0]) | uint32_t(p[1]) << 8 | u
 std::string fold(std::string s) { for(size_t i=0;i<s.size();++i) {char& c=s[i];if(c>='A'&&c<='Z')c=char(c+32);}return s; }
 std::string field(const char* p,size_t n) {const char* e=static_cast<const char*>(std::memchr(p,0,n));return std::string(p,e?size_t(e-p):n);}
 std::string basename(std::string s) {const size_t slash=s.find_last_of('/');if(slash!=std::string::npos)s.erase(0,slash+1);s=fold(s);if(s.size()>4&&s.compare(s.size()-4,4,".lz4")==0)s.resize(s.size()-4);return s;}
+// Only Samsung's exact A/B suffixes are slot aliases; names such as _ab are distinct.
+std::string without_slot(std::string s) {if(s.size()>2&&s[s.size()-2]=='_'&&(s[s.size()-1]=='a'||s[s.size()-1]=='b'))s.resize(s.size()-2);return s;}
+std::string image_stem(std::string s) {s=basename(s);if(s.size()>5&&s.compare(s.size()-5,5,".ext4")==0)s.resize(s.size()-5);else if(s.size()>4&&(s.compare(s.size()-4,4,".img")==0||s.compare(s.size()-4,4,".bin")==0))s.resize(s.size()-4);return without_slot(s);}
 EJODIN4_Status bad(std::string& error,const char* text,EJODIN4_Status code=EJODIN4_PIT_MAPPING_ERROR){error=text;return code;}
 struct Hash {
     HCRYPTPROV provider;HCRYPTHASH hash;
@@ -68,19 +71,19 @@ bool metadata(const std::string& name) {
     return s.compare(0,10,"meta-data/")==0||base=="download-list.txt"||base=="fota.zip";
 }
 bool misc(const PlanImage& image) {
-    const std::string n=basename(image.name),partition=fold(field(image.route.partition_name,32)),file=basename(field(image.route.file_name,32));
-    return partition=="misc"||n=="misc"||n=="misc.img"||n=="misc.bin"||file=="misc"||file=="misc.img"||file=="misc.bin";
+    const std::string n=image_stem(image.name),partition=image_stem(field(image.route.partition_name,32)),file=image_stem(field(image.route.file_name,32)),fota=image_stem(field(image.route.fota_name,32));
+    return partition=="misc"||n=="misc"||file=="misc"||fota=="misc";
 }
 bool userdata(const PlanImage& image) {
-    const std::string n=basename(image.name),partition=fold(field(image.route.partition_name,32)),file=basename(field(image.route.file_name,32));
-    return partition=="userdata"||partition=="user_data"||n=="userdata.img"||n=="userdata"||file=="userdata.img"||file=="userdata";
+    const std::string n=image_stem(image.name),partition=image_stem(field(image.route.partition_name,32)),file=image_stem(field(image.route.file_name,32)),fota=image_stem(field(image.route.fota_name,32));
+    return partition=="userdata"||partition=="user_data"||n=="userdata"||n=="user_data"||file=="userdata"||file=="user_data"||fota=="userdata"||fota=="user_data";
 }
 bool selected_protected_name(const std::string& name) {
-    const std::string n=basename(name);
+    const std::string n=image_stem(name);
     const char* const stems[]={"userdata","user_data","misc","omr"};
     for(size_t i=0;i<4;++i){const char* stem=stems[i];
         const std::string base(stem);
-        if(n==base||n==base+".img"||n==base+".bin")return true;
+        if(n==base)return true;
     }
     return false;
 }
@@ -245,21 +248,45 @@ EJODIN4_Status FirmwareSet::authenticate_identity(FirmwareIdentity& output,const
     EJODIN4_Status status=verify_unchanged(error);if(status!=EJODIN4_OK)return identity_failure(output,status,error);
     identity.status=EJODIN4_OK;output=identity;return EJODIN4_OK;
 }
-EJODIN4_Status FirmwareSet::validate_device_pit(const std::vector<EJODIN4_PitEntry>& pit,uint32_t sector,std::string& error,uint64_t verified_userdata_capacity_bytes){
+EJODIN4_Status FirmwareSet::validate_device_pit(const std::vector<EJODIN4_PitEntry>& pit,uint32_t sector,std::string& error,uint64_t verified_userdata_capacity_bytes,bool strict_layout){
     if(pit.empty()||pit.size()>512)return bad(error,"Device PIT is empty or exceeds the supported entry count");
     if(sector&&(sector<512||sector>4096||(sector&(sector-1))))return bad(error,"Caller PIT allocation unit is unsupported");
     if(verified_userdata_capacity_bytes>uint64_t(INT64_MAX))return bad(error,"Verified USERDATA capacity is outside supported bounds");
     std::map<uint32_t,const EJODIN4_PitEntry*> ids;
-    for(size_t p=0;p<pit.size();++p){const EJODIN4_PitEntry& entry=pit[p];if(!entry.identifier||entry.identifier==UINT32_MAX||!ids.insert(std::make_pair(entry.identifier,&entry)).second)return bad(error,"Device PIT has invalid or duplicate destination identifiers");}
+    std::map<std::string,const EJODIN4_PitEntry*> filenames;
+    for(size_t p=0;p<pit.size();++p){
+        const EJODIN4_PitEntry& entry=pit[p];
+        if(!entry.identifier||entry.identifier==UINT32_MAX||!ids.insert(std::make_pair(entry.identifier,&entry)).second)return bad(error,"Device PIT has invalid or duplicate destination identifiers");
+        const std::string name=fold(field(entry.file_name,32));
+        if(!name.empty()&&name!="-"){
+            // Odin4 uses the first live PIT entry in the received order.
+            filenames.insert(std::make_pair(name,&entry));
+        }
+    }
     uint32_t userdata_capacity_id=0;
-    for(size_t im=0;im<images.size();++im){PlanImage& image=images[im];
-        if(data_policy==EJODIN4_UPDATE_SELECTED&&selected_protected(image))return bad(error,"Selected update cannot approve USERDATA, MISC or OMR destinations");
-        const std::map<uint32_t,const EJODIN4_PitEntry*>::const_iterator found=ids.find(image.route.identifier);
-        if(found==ids.end()||!same_route(image.route,*found->second))return bad(error,"Package route differs from the current device PIT");
-        const EJODIN4_PitEntry& entry=*found->second;
+    std::vector<EJODIN4_PitEntry> routes;
+    routes.reserve(images.size());
+    for(size_t im=0;im<images.size();++im){const PlanImage& image=images[im];
+        const EJODIN4_PitEntry* destination;
+        if(strict_layout){
+            const std::map<uint32_t,const EJODIN4_PitEntry*>::const_iterator found=ids.find(image.route.identifier);
+            if(found==ids.end()||!same_route(image.route,*found->second))return bad(error,"Package route differs from the current device PIT");
+            destination=found->second;
+        }else{
+            const std::map<std::string,const EJODIN4_PitEntry*>::const_iterator found=filenames.find(basename(image.name));
+            if(found==filenames.end())return bad(error,"Firmware image has no current device PIT filename mapping");
+            destination=found->second;
+        }
+        const EJODIN4_PitEntry& entry=*destination;
+        const std::string live_name=field(entry.partition_name,32);
+        if(live_name.empty()||live_name.size()==32||MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,live_name.c_str(),int(live_name.size()),0,0)<=0||control_name(live_name))
+            return bad(error,"Selected live PIT partition name must be terminated UTF8");
+        PlanImage live_image=image;live_image.route=entry;
+        if(data_policy==EJODIN4_UPDATE_SELECTED&&selected_protected(live_image))return bad(error,"Selected update cannot approve USERDATA, MISC or OMR destinations");
+        if(data_policy==EJODIN4_PRESERVE_DATA&&(userdata(live_image)||misc(live_image)))return bad(error,"Preserve policy cannot approve a USERDATA or MISC destination");
         if(entry.device_type!=2&&entry.device_type!=8)return bad(error,"Unknown partition addressing");
         const uint32_t unit=sector?sector:entry.device_type==8?4096u:512u;
-        const std::string partition=fold(field(entry.partition_name,32));
+        const std::string partition=image_stem(field(entry.partition_name,32));
         const bool is_userdata=partition=="userdata"||partition=="user_data";
         if(!image.expanded_bytes)return bad(error,"Image logical size is zero");
         uint64_t capacity=uint64_t(entry.block_count)*unit;
@@ -272,11 +299,18 @@ EJODIN4_Status FirmwareSet::validate_device_pit(const std::vector<EJODIN4_PitEnt
             if(capacity&&capacity!=verified_userdata_capacity_bytes)return bad(error,"Verified USERDATA capacity conflicts with the positive live PIT capacity");
             capacity=verified_userdata_capacity_bytes;
         }
-        if(!capacity)return bad(error,"Zero partition capacity requires verified USERDATA geometry");
-        if(image.expanded_bytes>capacity)return bad(error,"Image logical size exceeds current device partition capacity");
-        image.route=entry;
+        if(!capacity&&strict_layout)return bad(error,"Zero partition capacity requires verified USERDATA geometry");
+        if(capacity&&image.expanded_bytes>capacity)return bad(error,"Image logical size exceeds current device partition capacity");
+        routes.push_back(entry);
     }
-    return verify_unchanged(error);
+    const EJODIN4_Status status=verify_unchanged(error);
+    if(status!=EJODIN4_OK)return status;
+    for(size_t i=0;i<images.size();++i){
+        images[i].route=routes[i];
+        const std::string partition=image_stem(field(routes[i].partition_name,32));
+        images[i].large_partition=partition=="system"||partition=="userdata"||partition=="user_data"||partition=="super";
+    }
+    return EJODIN4_OK;
 }
 
 EJODIN4_Status prepare_firmware_set(const EJODIN4_FirmwareFile* files,uint32_t count,uint32_t policy,uint64_t limit,
@@ -293,7 +327,7 @@ EJODIN4_Status prepare_firmware_set(const EJODIN4_FirmwareFile* files,uint32_t c
         const uint32_t chosen=policy==EJODIN4_PRESERVE_DATA&&roles.count(EJODIN4_PACKAGE_HOME_CSC)?EJODIN4_PACKAGE_HOME_CSC:EJODIN4_PACKAGE_CSC;
         if(policy==EJODIN4_PRESERVE_DATA&&chosen==EJODIN4_PACKAGE_CSC&&!roles.count(EJODIN4_PACKAGE_USERDATA))return bad(error,"Preserve with CSC requires a selected USERDATA archive and its download list",EJODIN4_INVALID_ARGUMENT);
         if(!selected&&(!roles.count(1)||!roles.count(2)||!roles.count(3)||!roles.count(chosen)))return bad(error,"BL, AP, CP and the policy-selected CSC variant are required",EJODIN4_INVALID_ARGUMENT);
-        if(target_pit&&(policy!=EJODIN4_CLEAN_INSTALL||target_pit->empty()||target_pit->size()>1048576u))return bad(error,"Target PIT override requires a bounded clean-install candidate",EJODIN4_INVALID_ARGUMENT);
+        if(target_pit&&(policy==EJODIN4_PRESERVE_DATA||target_pit->empty()||target_pit->size()>1048576u))return bad(error,"Target PIT override requires a bounded clean or selected-update candidate",EJODIN4_INVALID_ARGUMENT);
         std::unique_ptr<FirmwareSet> set(new FirmwareSet);set->data_policy=policy;
         if(target_pit)set->package_pit_bytes=*target_pit;
         std::vector<PlanImage> candidates;
@@ -355,7 +389,7 @@ EJODIN4_Status prepare_firmware_set(const EJODIN4_FirmwareFile* files,uint32_t c
         if(status!=EJODIN4_OK) return bad(error,"Package PIT failed strict validation",EJODIN4_INVALID_PIT);
         set->package_pit.resize(entries);
         std::map<std::string,const EJODIN4_PitEntry*> filenames;std::set<uint32_t> userdata_ids;
-        for(size_t p=0;p<set->package_pit.size();++p){const EJODIN4_PitEntry& route=set->package_pit[p];const std::string name=fold(field(route.file_name,32));if(!name.empty()&&!filenames.insert(std::make_pair(name,&route)).second)return bad(error,"Package PIT has ambiguous image filenames");if(fold(field(route.partition_name,32))=="userdata"||basename(name)=="userdata.img")userdata_ids.insert(route.identifier);}
+        for(size_t p=0;p<set->package_pit.size();++p){const EJODIN4_PitEntry& route=set->package_pit[p];const std::string name=fold(field(route.file_name,32));if(!name.empty()&&name!="-")filenames.insert(std::make_pair(name,&route));const std::string partition=image_stem(field(route.partition_name,32)),stem=image_stem(name);if(partition=="userdata"||partition=="user_data"||stem=="userdata"||stem=="user_data")userdata_ids.insert(route.identifier);}
         std::set<std::string> download_names,represented_names;
         if(policy==EJODIN4_PRESERVE_DATA){
             if(!download_list_found||selected_download_list.empty())return bad(error,"Preserve policy requires a validated selected HOME_CSC or USERDATA download list");
@@ -375,8 +409,8 @@ EJODIN4_Status prepare_firmware_set(const EJODIN4_FirmwareFile* files,uint32_t c
             const std::string route_name=field(image.route.partition_name,32);
             if(route_name.empty()||route_name.size()==32||MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,route_name.c_str(),int(route_name.size()),0,0)<=0||control_name(route_name))return bad(error,"Selected PIT partition name must be terminated UTF8");
             if(!image.decoded_bytes)return bad(error,"Empty firmware images cannot be transferred");
-            const std::string partition_name=fold(route_name);
-            image.large_partition=partition_name=="system"||partition_name=="userdata"||partition_name=="super";
+            const std::string partition_name=image_stem(route_name);
+            image.large_partition=partition_name=="system"||partition_name=="userdata"||partition_name=="user_data"||partition_name=="super";
             if(selected&&selected_protected(image)){set->skips.push_back(PlanSkip(image.role,EJODIN4_SKIP_USERDATA,image.name,image.route));continue;}
             if(policy==EJODIN4_PRESERVE_DATA&&(userdata(image)||userdata_ids.count(image.route.identifier))){set->skips.push_back(PlanSkip(image.role,EJODIN4_SKIP_USERDATA,image.name,image.route));continue;}
             if(policy==EJODIN4_PRESERVE_DATA){

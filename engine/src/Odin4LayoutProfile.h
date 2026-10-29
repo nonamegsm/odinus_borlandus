@@ -15,6 +15,6 @@ bool same_pit_layout(const std::vector<uint8_t>& package,const std::vector<uint8
 EJODIN4_Status resolve_layout_profile(const FirmwareSet& firmware,
     const std::vector<uint8_t>& live_pit,const EJODIN4_FirmwareFile* files,
     uint32_t count,uint32_t caller_sector_bytes,LayoutResolution& result,
-    std::string& error);
+    std::string& error,bool strict_layout=false);
 }
 #endif

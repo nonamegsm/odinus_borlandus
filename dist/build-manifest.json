@@ -5,83 +5,83 @@
   "private_runtime_dll_required": false,
   "executable": {
     "file": "OdinBCC.exe",
-    "sha256": "4ebbd4a762595148f148e081c03e988a908ad8702920e9ce34b31ede712c6f5e",
-    "bytes": 2452992
+    "sha256": "4cf08cb705eff8c575b28f7de048faf4c9742fa1796fdc191565c06719cb9a91",
+    "bytes": 2532864
   },
   "objects": [
     {
       "file": "build\\Release\\gui\\Main.obj",
-      "sha256": "fde915707f33b8aca9b6899787804bbd09ee2ed2413a131b778930cddd7e3655"
+      "sha256": "bfcb11f9418b866190fd471b0efda7541f3674ab941edf89fddc8990bf3bf815"
     },
     {
       "file": "build\\Release\\engine\\EasyJtagOdin4Core.obj",
-      "sha256": "68fe39801ef865823927e58feb912ab8dad6bf248d0c6f0a148f3db65d0a1173"
+      "sha256": "12800f49c7374d0548bfd8044d8ffe385e6236a47d01890f83149f1b511cac88"
     },
     {
       "file": "build\\Release\\engine\\Odin4DownloadChannel.obj",
-      "sha256": "693ff3130f74674a000dec2c069753a5a54b4cb1ca2941303fe6b6555dbc2c00"
+      "sha256": "ed0a54f1a0650c2640df87264b8d7269b8e29444397468c30484ca173d8a4745"
     },
     {
       "file": "build\\Release\\engine\\Odin4FirmwareArchive.obj",
-      "sha256": "e6c4aa9f6c39537b280262ced515e2f4bc1b078bf76d8111383b9eeb30342ec8"
+      "sha256": "5f7d9805821d8f8348666f7c4f620092eab691f0bac11fb80d88922220a556be"
     },
     {
       "file": "build\\Release\\engine\\Odin4FirmwareIdentity.obj",
-      "sha256": "8b248d57ed3b5ec884880ca9b5f8f8b210de6a57650c8fdb141afff50d463320"
+      "sha256": "b2944211b17bfdc0af2ce70ebd11065f38af0b6f3487e87bb182fe038328c13e"
     },
     {
       "file": "build\\Release\\engine\\Odin4FirmwareStream.obj",
-      "sha256": "c2410cb514d5af4d2f7bbcf1938411bf948e1818b21b06da41b772d501ecbb5e"
+      "sha256": "91659906501f7022370b50f4e520ca8ff8726e7b2033b7a8414b2c19874b92bb"
     },
     {
       "file": "build\\Release\\engine\\Odin4FlashOperation.obj",
-      "sha256": "d8b4e4dc51696ee83321c7457b5cd8b04abdea64192a043754ca161c086e7c8d"
+      "sha256": "6a9db734e6c4656a19c9aabcfc81c91288dafd360731298749c3dc764bf48407"
     },
     {
       "file": "build\\Release\\engine\\Odin4LayoutProfile.obj",
-      "sha256": "903c9e354a09dbc86f9077ff6f7f8bbcbb9dba5256527dc5bf9b7e20500ab781"
+      "sha256": "c82c4c9dc088bc2a9a33639afa05f0ec0d33a03a9d7ad80e9585412cdbc5d097"
     },
     {
       "file": "build\\Release\\engine\\Odin4SamsungSerial.obj",
-      "sha256": "b91836480ff14096625c1372cddb8634564a2ff96119f172f3e5655df4009e0b"
+      "sha256": "b979a30643c894d450fcb59ee79f5d73273376ed2c6bb3706daa907b7d383c88"
     },
     {
       "file": "build\\Release\\engine\\Odin4Session.obj",
-      "sha256": "0d680e8d1a43b5e14288acf1ce42fa3b9990d5d92b5b72a150e3d71f32dcfbe9"
+      "sha256": "a4ca6b1f651e8133327a4be39b48e5141b62185edc9492c2d5e25b6d1009fb1d"
     },
     {
       "file": "build\\Release\\engine\\Odin4Tcp.obj",
-      "sha256": "27a77d644bb06c7d945373f8f464987d130408e76fc96921631bf84f8ceb088a"
+      "sha256": "3f7ecac58c4b6e43c604936336578bac885e9a3a72f48f1e839a1aebd37b7fba"
     },
     {
       "file": "build\\Release\\engine\\Odin4UsbTransport.obj",
-      "sha256": "211d43558787b3903bc37eef4bac36c0a5572fe7d1f82af353980e2d6a87023e"
+      "sha256": "c0dc69b51af41faff9f4480da71899b9953f4fbc4c2bcf578da4a71957a97f7e"
     },
     {
       "file": "build\\Release\\engine\\Odin4WinUsb.obj",
-      "sha256": "734ba49bdc06ccaedad15bef9efb37a536c33ce5b9c63ba3697dee4156d72e27"
+      "sha256": "ed8ce599c9e5fab033ed97057d6ac99753ff7f4e622a57514250ae6dd616c9b6"
     },
     {
       "file": "build\\Release\\lz4\\lz4.obj",
-      "sha256": "e9a6c66b5692aab9b0db63bc5bb26175499588f3e6940723ac9d5ae06b37c653"
+      "sha256": "7805de8feabd5547aa38dddc28914a5a2bc20fb62e2a49ab762232d9faa5845a"
     },
     {
       "file": "build\\Release\\lz4\\lz4hc.obj",
-      "sha256": "e5bed1bb74263af76cfc3f5e093cfbd44f82527cbe4e918fe6f3054894b12b9a"
+      "sha256": "0cac232e776838b7a2c2719dceaa1d9d63c2b85df837cccc231e49097b97c183"
     },
     {
       "file": "build\\Release\\lz4\\lz4frame.obj",
-      "sha256": "ba5c26ac0433812eabaf41645dafb0376c7423d10079e32735bd485745d3d1d7"
+      "sha256": "7716171be38c99d9b175fab461e2a992becc4b7ea1753b0cc82fb19f89d71248"
     },
     {
       "file": "build\\Release\\lz4\\xxhash.obj",
-      "sha256": "c7c6195e41318e6f97c3729b3528683a8c28bd1f62ef52bde282b2538d22c2bd"
+      "sha256": "09f4e3269004b763cbc303e6697d909a7ce13c2100b9ae94791d3098560799bc"
     }
   ],
   "sources": [
     {
       "file": "src\\Main.cpp",
-      "sha256": "5bdd13696a01450438088be9ee985ee7f8c54d60584674d08c38b68b479c2e71"
+      "sha256": "04d16feee4c07931b2e9e7e171df5acee707b372a2adca2f799ad0c10fd3a005"
     },
     {
       "file": "engine\\src\\EasyJtagOdin4Core.cpp",
@@ -93,7 +93,7 @@
     },
     {
       "file": "engine\\src\\Odin4FirmwareArchive.cpp",
-      "sha256": "cdb55d7f75ae2545fc3b56d646bf32564462b9cc7f3de88ab7521cb234e8b7c6"
+      "sha256": "bf98820728de6731eb569609ffc7dce1936accf6d0f13cd34f0e7c728da849d6"
     },
     {
       "file": "engine\\src\\Odin4FirmwareIdentity.cpp",
@@ -101,23 +101,23 @@
     },
     {
       "file": "engine\\src\\Odin4FirmwareStream.cpp",
-      "sha256": "4f9b1c3ab3c2cd44c83c7d2d5bd0308c67afd9b001d2b60065133dda1dd83eeb"
+      "sha256": "f42ce110b2ef94d88db00825ba3fd6e7ec62819b2f8da456e86660175800f21a"
     },
     {
       "file": "engine\\src\\Odin4FlashOperation.cpp",
-      "sha256": "742f8cffcc245ae340561139c5cd8878b4488c6cb420824add519ab939c65319"
+      "sha256": "a5282da54612fdb94d2e6abca997b8be4d4561b057126d9fbdc94eeb13764038"
     },
     {
       "file": "engine\\src\\Odin4LayoutProfile.cpp",
-      "sha256": "82f9b92048a55d28bf17ebee0d9be2580442fbf30ddbb27cd7f9809deade7c26"
+      "sha256": "306c48f56c80c859771162a26d541485acbba55d32627f824d6f582d5d1a8406"
     },
     {
       "file": "engine\\src\\Odin4SamsungSerial.cpp",
-      "sha256": "e21b9582b15f744fd16e97fe836a41a2c46bf6a87bbb869d8d5d2d5ef72c5739"
+      "sha256": "fb2c7ee909a0925985aa80271ea9e723141c37b23bd9cf4ebae451daeecd8582"
     },
     {
       "file": "engine\\src\\Odin4Session.cpp",
-      "sha256": "857e02a573ce467c3e8fa94d79bada008858359b4605dfe8934af42d03774191"
+      "sha256": "e9a47aeab779920ec29f4e389cf1d55f7fc71987381c3450a0dd554b5bc19cb6"
     },
     {
       "file": "engine\\src\\Odin4Tcp.cpp",
@@ -151,11 +151,11 @@
   "headers": [
     {
       "file": "include\\EasyJtagOdin4Core.h",
-      "sha256": "e3f006393297cb5bf396079eac7ef62b6927785d192ed776f81176ae54fe5bd4"
+      "sha256": "5455f5bce3ec5d214599fc3db20d7dedcf040d839528318fbfe6647167cb3d8e"
     },
     {
       "file": "engine\\include\\EasyJtagOdin4Core.h",
-      "sha256": "e3f006393297cb5bf396079eac7ef62b6927785d192ed776f81176ae54fe5bd4"
+      "sha256": "5455f5bce3ec5d214599fc3db20d7dedcf040d839528318fbfe6647167cb3d8e"
     },
     {
       "file": "engine\\src\\BccCompat.h",
@@ -179,7 +179,7 @@
     },
     {
       "file": "engine\\src\\Odin4FirmwareStream.h",
-      "sha256": "bc2b310da8524ff2fcee2cf61ae947431021f2b43c319af049c0f0a92bd33999"
+      "sha256": "8f98f3709442d966cf81f908c295754eb6748108dadeaf49845fe4a6ea435750"
     },
     {
       "file": "engine\\src\\Odin4FlashOperation.h",
@@ -187,11 +187,11 @@
     },
     {
       "file": "engine\\src\\Odin4LayoutProfile.h",
-      "sha256": "1039bd3b5b12d8fc0fbc19b243be4b3782f525bc91ea43f60c7526e02e8e3233"
+      "sha256": "5c9e3ee5453792a63a53a387845abe6ccfbd9ed01c7497f628475433dec63f00"
     },
     {
       "file": "engine\\src\\Odin4SamsungSerial.h",
-      "sha256": "bb787c1b8450fa68bfe6e9cef101975fa3d0011d1a1432c961cb1383601d94f8"
+      "sha256": "a2bffe2de468c06f99f8c50565ff692b52a15f952928b1c94f8e90d5a196a6e7"
     },
     {
       "file": "engine\\src\\Odin4Session.h",
@@ -215,7 +215,7 @@
     },
     {
       "file": "src\\UiLogic.h",
-      "sha256": "b8885841e178633a37b9bf28c3a287de351b7af52f11302b74ca0e9358af7b54"
+      "sha256": "6c6abd53d1cb839be480f91617c8d5a005155811173dfbdfee417dc786ca0730"
     }
   ],
   "pe_imports": [

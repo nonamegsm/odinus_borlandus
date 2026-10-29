@@ -49,14 +49,16 @@ enum { EJODIN4_ANALYSIS_PIT_AVAILABLE = 1, EJODIN4_ANALYSIS_ALL_IMAGES_MAPPED = 
 
 /* Flash operations are explicit. PLAN_ONLY performs no device I/O; READ_PIT
  * reads a session PIT and closes without image transfer/reboot. WRITE requires
- * an explicit data policy and never uploads a PIT. REPARTITION requires CLEAN_INSTALL,
- * complete BL/AP/CP/CSC firmware and Samsung stock-driver or TCP transport. It uploads the
+ * an explicit data policy and never uploads a PIT. REPARTITION requires CLEAN_INSTALL
+ * with complete BL/AP/CP/CSC or UPDATE_SELECTED with image archives, and Samsung
+ * stock-driver or TCP transport. It uploads the
  * selected firmware PIT (or explicit raw PIT_TARGET), verifies read-back, then writes images. */
 enum { EJODIN4_FLASH_PLAN_ONLY = 0, EJODIN4_FLASH_READ_PIT = 1, EJODIN4_FLASH_WRITE = 2, EJODIN4_FLASH_REPARTITION = 3 };
 enum { EJODIN4_PACKAGE_BL = 1, EJODIN4_PACKAGE_AP = 2, EJODIN4_PACKAGE_CP = 3, EJODIN4_PACKAGE_CSC = 4, EJODIN4_PACKAGE_HOME_CSC = 5, EJODIN4_PACKAGE_USERDATA = 6, EJODIN4_PACKAGE_PIT_REFERENCE = 7, EJODIN4_PACKAGE_PIT_TARGET = 8 };
 /* PIT_TARGET is an optional bounded raw binary PIT snapshot, not an archive.
- * It overrides valid embedded PITs only for REPARTITION or CLEAN_INSTALL PLAN_ONLY.
- * It is rejected by ordinary WRITE/READ_PIT. PIT_REFERENCE never authorizes upload. */
+ * It overrides valid embedded PITs only for REPARTITION or CLEAN_INSTALL/UPDATE_SELECTED PLAN_ONLY.
+ * It is rejected by ordinary WRITE/READ_PIT. PIT_REFERENCE alone never
+ * authorizes upload; an explicit REPARTITION can use its validated PIT. */
 /* Package order is BL, AP, CP, selected CSC variant, optional USERDATA slot.
  * HOME_CSC and USERDATA are archive roles, not image names. Preserve mode may
  * use CSC + a USERDATA-slot OEM download list; an additional CSC may supply
@@ -66,7 +68,7 @@ enum { EJODIN4_PACKAGE_BL = 1, EJODIN4_PACKAGE_AP = 2, EJODIN4_PACKAGE_CP = 3, E
  * optional PIT_REFERENCE archive. Reference images never become transfers.
  * USERDATA, MISC and OMR destinations are always excluded in selected mode. */
 enum { EJODIN4_PRESERVE_DATA = 1, EJODIN4_CLEAN_INSTALL = 2, EJODIN4_UPDATE_SELECTED = 3 };
-/* PLAN_REPARTITION validates an embedded candidate in a full CLEAN PLAN_ONLY
+/* PLAN_REPARTITION validates an embedded candidate in a CLEAN or UPDATE_SELECTED PLAN_ONLY
  * request without device I/O. It never authorizes a write. Removed bit2 stays invalid. */
 enum { EJODIN4_FLASH_REBOOT = 1, EJODIN4_FLASH_PLAN_REPARTITION = 4 };
 enum { EJODIN4_FLASH_ANY_WRITE = 1, EJODIN4_FLASH_FINALIZED = 2, EJODIN4_FLASH_REBOOT_SENT = 4, EJODIN4_FLASH_PIT_MATCHED = 8, EJODIN4_FLASH_PLAN_READY = 16, EJODIN4_FLASH_PER_PARTITION_PIT_UNITS = 32 };
@@ -353,10 +355,11 @@ EJODIN4_API EJODIN4_Status EJODIN4_CALL EJODIN4_ProbeDownloadConnection(
  * links and sparse records are rejected. At most 512 regular entries, unique
  * safe UTF-8 paths up to 255 bytes, at most 1024 total headers, two zero end
  * blocks and zero end padding. Per-entry padding bytes are not interpreted.
- * payload_bytes is the complete hashed TAR prefix (including end/padding),
+ * payload_bytes is the complete TAR prefix (including end/padding),
  * image_bytes sums stored regular-file sizes. LZ4/PIT flags recognize names
  * only (.lz4, .pit or .pit.lz4), not content. actual_md5 always contains the
- * TAR prefix MD5. A trailer, when present, must verify; .tar.md5 requires one.
+ * MD5 of the TAR and any supported Samsung build-information block preceding
+ * the digest. A trailer, when present, must verify; .tar.md5 requires one.
  * MD5 detects accidental corruption; it does not authenticate firmware.
  * NULL entries/capacity 0 validates the ENTIRE file, then returns required
  * count and valid summary with BUFFER_TOO_SMALL. Other errors reset count to
@@ -382,7 +385,9 @@ EJODIN4_API EJODIN4_Status EJODIN4_CALL EJODIN4_InspectFirmwareArchive(
  * retained (at most 1 MiB); existing ParsePit restrictions apply.
  * Mapping uses only ASCII-folded image basename minus one .lz4 suffix versus
  * exact PIT file_name. No aliases or partition capacity guesses. Duplicate PIT
- * names/destinations fail. PIT members themselves remain unmapped; unmapped
+ * filenames select the first matching row in table order; duplicate destination
+ * images fail. The PIT filename placeholder "-" is ignored.
+ * PIT members themselves remain unmapped; unmapped
  * identifier is UINT32_MAX and other metadata is zero. Mapped partition_name
  * is nonempty terminated UTF-8. ALL_IMAGES_MAPPED requires a non-PIT image.
  * NULL images/capacity0 fully validates before BUFFER_TOO_SMALL with valid
@@ -408,11 +413,16 @@ typedef void (EJODIN4_CALL *EJODIN4_FlashProgressCallback)(
  * is 0 for negotiated defaults or 1000..120000. REBOOT is WRITE-only.
  * logical_sector_bytes is an optional caller PIT allocation-unit override
  * (512/1024/2048/4096). Otherwise every selected type-2 MMC entry uses512 bytes
- * and type-8 UFS entry uses4096 bytes. All images must fit the resulting byte
- * capacity using their expanded sparse extent. Unknown device types fail.
- * userdata_capacity_bytes is independently verified capacity for zero-count
- * USERDATA; it may use automatic units and must align to that route's unit.
- * A zero-count USERDATA entry has no inferred capacity floor. Mixed selected
+ * and type-8 UFS entry uses4096 bytes. Normal WRITE maps images to the first
+ * matching live PIT row in table order and uses its destination ID and type.
+ * Duplicate A/B filenames do not imply active-slot selection or writing both
+ * slots. Offline planning and repartition use the first matching target PIT row.
+ * Positive partition counts bound
+ * expanded images; zero counts leave capacity unmeasured and transfers follow
+ * device responses. Unknown device types fail. userdata_capacity_bytes may
+ * supply independently verified USERDATA capacity, aligned to that route's unit.
+ * No capacity is inferred from a zero count; failure may follow a partial write.
+ * Explicit repartition retains exact target and known-capacity checks. Mixed selected
  * eMMC/UFS units report logical_sector_bytes=0 and, for a verified WRITE plan,
  * PER_PARTITION_PIT_UNITS. Homogeneous plans report their common512/4096 unit.
  * Explicit caller units remain strict; model/build/PIT hashes are not gates.
@@ -423,8 +433,9 @@ typedef void (EJODIN4_CALL *EJODIN4_FlashProgressCallback)(
  * Selected update accepts a nonempty subset, at most one CSC variant, and an
  * optional reference archive supplying only its validated PIT. It needs no OEM
  * download list and omits USERDATA/MISC/OMR by member and PIT destination aliases.
- * Entire selected firmware is validated before any transfer; package PIT never
- * uploads. WRITE compares current device PIT and rejects unsupported routes.
+ * Entire selected firmware is validated before any transfer. Normal WRITE does
+ * not upload the package PIT; explicit repartition can upload a selected PIT.
+ * WRITE validates current device routes before transferring image data.
  * Samsung stock-driver and TCP sessions support negotiated versions 1 through 5;
  * versions 4/5 require validated DEVINFO and manufacturer-signed authenticate.mf
  * with matching stored-member digests and common model/carrier before WRITE.

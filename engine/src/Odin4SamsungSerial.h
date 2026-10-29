@@ -19,6 +19,19 @@ public:
 };
 struct SerialTimeoutPolicy { uint32_t read_first_byte_ms,write_total_ms; };
 bool serial_timeout_policy(uint64_t now,uint64_t deadline,SerialTimeoutPolicy& policy);
+// Used only on a freshly opened exclusive handle, before protocol I/O.
+class SerialStartup {
+public:
+    virtual ~SerialStartup() {}
+    virtual bool set_mask(uint32_t mask,std::string& error)=0;
+    virtual bool setup_buffers(uint32_t input,uint32_t output,std::string& error)=0;
+    virtual bool purge(uint32_t flags,std::string& error)=0;
+    virtual EJODIN4_Status set_timeouts(uint64_t deadline,std::string& error)=0;
+    virtual uint64_t now() const=0;
+    virtual void wait(uint32_t milliseconds)=0;
+};
+EJODIN4_Status initialize_serial(SerialStartup& startup,uint64_t deadline,
+    const Cancellation& cancel,std::string& error);
 bool valid_com_port(const std::wstring& port);
 EJODIN4_Status probe_download(Platform& platform, const char* path, uint32_t bytes,
     uint32_t timeout, EJODIN4_DownloadProbe* output, const Cancellation& cancel,

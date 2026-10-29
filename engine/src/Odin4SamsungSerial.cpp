@@ -32,6 +32,42 @@ bool serial_timeout_policy(uint64_t now, uint64_t deadline, SerialTimeoutPolicy&
     return true;
 }
 
+namespace {
+EJODIN4_Status serial_startup_interrupted(SerialStartup& startup,uint64_t deadline,
+    const Cancellation& cancel,std::string& error) {
+    if(cancel.requested()){error="Samsung serial initialization cancelled";return EJODIN4_CANCELLED;}
+    if(startup.now()>=deadline){error="Samsung serial initialization timed out";return EJODIN4_TIMEOUT;}
+    return EJODIN4_OK;
+}
+}
+EJODIN4_Status initialize_serial(SerialStartup& startup,uint64_t deadline,
+    const Cancellation& cancel,std::string& error) {
+    EJODIN4_Status status=serial_startup_interrupted(startup,deadline,cancel,error);
+    if(status!=EJODIN4_OK)return status;
+    if(!startup.set_mask(1u,error))return EJODIN4_USB_IO_ERROR; // EV_RXCHAR
+    status=serial_startup_interrupted(startup,deadline,cancel,error);
+    if(status!=EJODIN4_OK)return status;
+    if(!startup.setup_buffers(4096u,4096u,error))return EJODIN4_USB_IO_ERROR;
+    status=serial_startup_interrupted(startup,deadline,cancel,error);
+    if(status!=EJODIN4_OK)return status;
+    // Only purge a newly opened, exclusive handle before the handshake.
+    if(!startup.purge(15u,error))return EJODIN4_USB_IO_ERROR;
+    status=serial_startup_interrupted(startup,deadline,cancel,error);
+    if(status!=EJODIN4_OK)return status;
+    status=startup.set_timeouts(deadline,error);
+    if(status!=EJODIN4_OK)return status;
+    const uint64_t started=startup.now();
+    const uint64_t ready=started>UINT64_MAX-500u?UINT64_MAX:started+500u;
+    for(;;) {
+        if(cancel.requested()){error="Samsung serial initialization cancelled";return EJODIN4_CANCELLED;}
+        const uint64_t now=startup.now();
+        if(now>=deadline){error="Samsung serial initialization timed out";return EJODIN4_TIMEOUT;}
+        if(now>=ready)return EJODIN4_OK;
+        const uint64_t slice=std::min<uint64_t>(20u,std::min<uint64_t>(ready-now,deadline-now));
+        startup.wait(static_cast<uint32_t>(slice));
+    }
+}
+
 bool valid_com_port(const std::wstring& port) {
     if (port.size() < 4 || port.size() > 8 || port.compare(0, 3, L"COM") || port[3] == L'0') return false;
     uint32_t number = 0;
@@ -208,6 +244,28 @@ class NativeSerial : public SerialConnection {
         }
         return EJODIN4_OK;
     }
+    class Startup : public SerialStartup {
+        NativeSerial& serial_;
+    public:
+        explicit Startup(NativeSerial& serial):serial_(serial) {}
+        bool set_mask(uint32_t mask,std::string& error) {
+            if(SetCommMask(serial_.file_,mask))return true;
+            error=serial_error("Set Samsung communication event mask");return false;
+        }
+        bool setup_buffers(uint32_t input,uint32_t output,std::string& error) {
+            if(SetupComm(serial_.file_,input,output))return true;
+            error=serial_error("Set Samsung communication queue recommendations");return false;
+        }
+        bool purge(uint32_t flags,std::string& error) {
+            if(PurgeComm(serial_.file_,flags))return true;
+            error=serial_error("Clear Samsung communication queues before handshake");return false;
+        }
+        EJODIN4_Status set_timeouts(uint64_t deadline,std::string& error) {
+            return serial_.apply_deadline(deadline,error);
+        }
+        uint64_t now() const {return GetTickCount64();}
+        void wait(uint32_t milliseconds) {Sleep(milliseconds);}
+    };
 public:
     NativeSerial() : file_(INVALID_HANDLE_VALUE), restore_(false), timeout_error_(ERROR_SUCCESS) { ZeroMemory(&original_,sizeof(original_)); }
     ~NativeSerial() {
@@ -230,7 +288,8 @@ public:
             OPEN_EXISTING, FILE_FLAG_OVERLAPPED, 0);
         if (file_ == INVALID_HANDLE_VALUE) { error = serial_error("Open selected Samsung modem interface (device may be busy)"); return EJODIN4_USB_IO_ERROR; }
         if (!GetCommTimeouts(file_, &original_)) { error = serial_error("Read Samsung communication timeouts"); return EJODIN4_USB_IO_ERROR; }
-        return apply_deadline(deadline,error);
+        Startup startup(*this);
+        return initialize_serial(startup,deadline,cancel,error);
     }
     EJODIN4_Status transfer(bool read,uint8_t* data,uint32_t capacity,uint32_t& actual,
         uint64_t deadline,const Cancellation& cancel,std::string& error) {

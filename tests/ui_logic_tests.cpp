@@ -102,7 +102,10 @@ int main(){
     check(OdinUi::repartitionSelection(EJODIN4_CLEAN_INSTALL,full),"embedded target permits clean full image selection");
     check(OdinUi::repartitionSelection(EJODIN4_CLEAN_INSTALL,full|(1u<<6)|(1u<<8)),"raw target permits optional USERDATA with clean full images");
     for(unsigned role=1;role<=4;++role)check(!OdinUi::repartitionSelection(EJODIN4_CLEAN_INSTALL,full&~(1u<<role)),"each BL AP CP CSC slot required for repartition");
-    check(!OdinUi::repartitionSelection(EJODIN4_PRESERVE_DATA,full)&&!OdinUi::repartitionSelection(EJODIN4_UPDATE_SELECTED,full),"repartition never uses preserve or selected-update policy");
+    check(!OdinUi::repartitionSelection(EJODIN4_PRESERVE_DATA,full)&&OdinUi::repartitionSelection(EJODIN4_UPDATE_SELECTED,full),"repartition supports selected-update but not preserve policy");
+    check(OdinUi::repartitionSelection(EJODIN4_UPDATE_SELECTED,(1u<<2)|(1u<<7)),"one selected image plus reference permits target validation");
+    check(!OdinUi::repartitionSelection(EJODIN4_UPDATE_SELECTED,(1u<<7)|(1u<<8)),"reference and target alone are not image selections");
+    check(!OdinUi::repartitionSelection(EJODIN4_UPDATE_SELECTED,(1u<<2)|(1u<<4)|(1u<<5)),"selected policy rejects both CSC variants");
     check(!OdinUi::repartitionSelection(EJODIN4_CLEAN_INSTALL,full|(1u<<7))&&!OdinUi::repartitionSelection(EJODIN4_CLEAN_INSTALL,full|(1u<<5)),"reference and HOME_CSC cannot authorize repartition");
     check(OdinUi::rawPitName("C:/firmware/device.PIT")&&!OdinUi::rawPitName("device.pit.tar")&&!OdinUi::rawPitName(".xml")&&!OdinUi::rawPitName(""),"raw target accepts only explicit PIT extension");
     for(unsigned phase=18;phase<=24;++phase){
